@@ -1,0 +1,2073 @@
+/* LIMBO — dark, minimal, wide-tracked UI */
+
+:root {
+  --ink: rgba(235, 240, 255, 0.92);
+  --ink-dim: rgba(235, 240, 255, 0.55);
+  --ink-faint: rgba(235, 240, 255, 0.30);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* iOS Safari: kill the grey tap flash on every button. Buttons already
+   carry touch-action: manipulation (no double-tap zoom); the paint canvas
+   carries touch-action: none (no scroll / pull-to-refresh while drawing). */
+button { -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #020204;
+  font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  color: var(--ink);
+  -webkit-user-select: none; user-select: none;
+}
+
+#scene {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+#scene:active { cursor: grabbing; }
+
+/* ---------- portal transition fade ---------- */
+#fade {
+  position: fixed; inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+  z-index: 40;
+}
+#fade.on { opacity: 1; }
+
+/* ---------- realm title card ---------- */
+#title-card {
+  position: fixed;
+  top: 38%; left: 0; right: 0;
+  text-align: center;
+  font-weight: 200;
+  font-size: clamp(28px, 5vw, 54px);
+  letter-spacing: 0.55em;
+  text-indent: 0.55em; /* recenter tracked text */
+  color: var(--ink);
+  text-shadow: 0 0 30px rgba(160, 200, 255, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.1s ease;
+  z-index: 41;
+}
+#title-card.show { opacity: 1; }
+
+/* ---------- realm attuned shimmer ---------- */
+#attuned {
+  position: fixed;
+  top: 30%; left: 0; right: 0;
+  text-align: center;
+  font-weight: 200;
+  font-size: clamp(16px, 2.6vw, 26px);
+  letter-spacing: 0.7em;
+  text-indent: 0.7em;
+  color: #ffe9a8;
+  text-shadow: 0 0 24px rgba(255, 220, 130, 0.8);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 41;
+}
+#attuned.show { animation: attuned 3s ease forwards; }
+@keyframes attuned {
+  0%   { opacity: 0; letter-spacing: 0.4em; }
+  20%  { opacity: 1; }
+  75%  { opacity: 1; }
+  100% { opacity: 0; letter-spacing: 0.9em; }
+}
+
+/* ---------- unlock celebration toast ---------- */
+#unlock-toast {
+  position: fixed;
+  top: 44%; left: 0; right: 0;
+  text-align: center;
+  font-weight: 300;
+  font-size: clamp(13px, 2.2vw, 18px);
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+  color: #ffe9a8;
+  text-shadow: 0 0 20px rgba(255, 210, 120, 0.9);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 42;
+}
+#unlock-toast.show { animation: unlocktoast 4.5s ease forwards; }
+#unlock-toast div { margin: 8px 0; }
+#unlock-toast div:first-child { color: #fff3d0; }
+@keyframes unlocktoast {
+  0%   { opacity: 0; transform: translateY(10px); }
+  12%  { opacity: 1; transform: none; }
+  78%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- wisp customization (settings panel) ---------- */
+.set-sub {
+  margin: 10px 0 6px;
+  letter-spacing: 0.3em; font-size: 10px;
+  color: var(--ink-faint);
+}
+.wisp-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.wisp-swatch {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  background: none; border: none; cursor: pointer;
+  padding: 6px 4px; min-width: 56px; min-height: 44px;
+  font-family: inherit; touch-action: manipulation;
+}
+.wisp-swatch .dot {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.85), var(--sw) 62%);
+  box-shadow: 0 0 14px var(--sw);
+  border: 2px solid transparent;
+}
+.wisp-swatch.equipped .dot { border-color: #ffe9a8; }
+.wisp-swatch.locked { cursor: default; }
+.wisp-swatch.locked .dot {
+  background: rgba(120, 130, 150, 0.22);
+  box-shadow: none;
+}
+.wisp-swatch .lbl {
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--ink-dim); text-align: center;
+  max-width: 72px; line-height: 1.5;
+}
+.wisp-swatch.locked .lbl { color: var(--ink-faint); font-size: 8.5px; }
+.wisp-hat {
+  background: rgba(235, 240, 255, 0.06);
+  border: 1px solid rgba(140, 170, 255, 0.35);
+  border-radius: 999px;
+  color: var(--ink); font-family: inherit;
+  letter-spacing: 0.14em; font-size: 10.5px;
+  padding: 9px 14px; cursor: pointer; touch-action: manipulation;
+  min-height: 44px;
+}
+.wisp-hat.equipped { border-color: #ffe9a8; color: #ffe9a8; }
+.wisp-hat.locked {
+  cursor: default; opacity: 0.6;
+  font-size: 9px; color: var(--ink-faint);
+}
+
+/* ---------- prints (shop tie-in) ---------- */
+.set-tiny {
+  font-size: 10px; letter-spacing: 0.18em; color: var(--ink-faint);
+  margin: 2px 0 8px;
+}
+#print-list, #prints-list { display: flex; flex-direction: column; gap: 8px; }
+.print-row {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(235, 240, 255, 0.04);
+  border: 1px solid rgba(140, 170, 255, 0.22);
+  border-radius: 12px; padding: 8px 10px; min-height: 44px;
+}
+.print-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.print-title {
+  flex: 1; font-size: 11.5px; letter-spacing: 0.12em; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.print-btn {
+  flex: none; background: rgba(255, 233, 168, 0.10);
+  border: 1px solid rgba(255, 233, 168, 0.55); border-radius: 999px;
+  color: #ffe9a8; font-family: inherit; letter-spacing: 0.14em;
+  font-size: 10px; padding: 9px 14px; min-height: 44px;
+  cursor: pointer; touch-action: manipulation;
+}
+.print-btn:active { background: rgba(255, 233, 168, 0.22); }
+
+/* ---------- friends + live presence (settings panel) ---------- */
+#friends-live { color: #9fe8b8; letter-spacing: 0.18em; font-size: 10px; }
+.friend-add-row { display: flex; gap: 8px; margin: 2px 0 8px; }
+#friend-add-input {
+  flex: 1; min-width: 0;
+  background: transparent; border: none;
+  border-bottom: 1px solid rgba(235, 240, 255, 0.25);
+  color: var(--ink); font-family: inherit;
+  font-size: 12px; letter-spacing: 0.12em;
+  padding: 6px 2px; outline: none;
+  -webkit-user-select: text; user-select: text;
+}
+#friend-add-input::placeholder { color: var(--ink-faint); }
+#friend-add-btn {
+  flex: none; background: rgba(235, 240, 255, 0.06);
+  border: 1px solid rgba(140, 170, 255, 0.35); border-radius: 999px;
+  color: var(--ink); font-family: inherit; letter-spacing: 0.14em;
+  font-size: 10px; padding: 9px 16px; min-height: 44px;
+  cursor: pointer; touch-action: manipulation;
+}
+#friend-add-btn:active { background: rgba(235, 240, 255, 0.14); }
+#friends-list { display: flex; flex-direction: column; gap: 8px; }
+.friend-row {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(235, 240, 255, 0.04);
+  border: 1px solid rgba(140, 170, 255, 0.22);
+  border-radius: 12px; padding: 8px 10px; min-height: 44px;
+}
+.friend-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none;
+  background: #3a4152;
+}
+.friend-dot.live { background: #7dffa8; box-shadow: 0 0 10px #7dffa8; }
+.friend-name {
+  flex: 1; min-width: 0; font-size: 11.5px; letter-spacing: 0.12em;
+  color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.friend-realm {
+  flex: none; font-size: 9.5px; letter-spacing: 0.14em; color: var(--ink-faint);
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.friend-join {
+  flex: none; background: rgba(255, 233, 168, 0.10);
+  border: 1px solid rgba(255, 233, 168, 0.55); border-radius: 999px;
+  color: #ffe9a8; font-family: inherit; letter-spacing: 0.14em;
+  font-size: 10px; padding: 9px 14px; min-height: 44px;
+  cursor: pointer; touch-action: manipulation;
+}
+.friend-join:active { background: rgba(255, 233, 168, 0.22); }
+.friend-remove {
+  flex: none; background: none; border: none; cursor: pointer;
+  color: var(--ink-faint); font-size: 17px; line-height: 1;
+  min-width: 44px; min-height: 44px; touch-action: manipulation;
+  font-family: inherit;
+}
+.friend-remove:active { color: var(--ink); }
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
+
+#realm-name {
+  position: absolute; top: 22px; left: 62px; /* gear button sits at top-left */
+  font-weight: 300; font-size: 13px;
+  letter-spacing: 0.45em;
+  color: var(--ink-dim);
+}
+
+#echo-counter {
+  position: absolute; top: 22px; right: 26px;
+  font-weight: 300; font-size: 13px;
+  letter-spacing: 0.45em;
+  color: var(--ink-dim);
+}
+
+#controls-hint {
+  position: absolute; bottom: 26px; left: 0; right: 0;
+  text-align: center;
+  font-weight: 300; font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--ink-faint);
+  transition: opacity 2s ease;
+}
+#controls-hint.gone { opacity: 0; }
+
+#mute-label {
+  position: absolute; bottom: 24px; right: 26px;
+  font-weight: 300; font-size: 10px;
+  letter-spacing: 0.35em;
+  color: var(--ink-faint);
+}
+
+#peer-count {
+  position: absolute; top: 46px; right: 26px;
+  font-weight: 300; font-size: 11px;
+  letter-spacing: 0.4em;
+  color: var(--ink-faint);
+}
+/* while discovery is still running, a soft pulsing dot says "be patient" */
+#peer-count.searching::after {
+  content: " \25CF";
+  color: #9fd8ff;
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes pulse-dot { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+#peer-count.settled { color: var(--ink-faint); }
+
+/* ---------- settings ---------- */
+#gear-btn {
+  position: fixed; top: 14px; left: 14px; z-index: 46;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(4, 8, 18, 0.55);
+  border: 1px solid rgba(140, 170, 255, 0.3);
+  color: var(--ink-dim); font-size: 18px; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+}
+#gear-btn:active { background: rgba(140, 170, 255, 0.15); }
+#settings-panel {
+  position: fixed; top: 62px; left: 14px; z-index: 45;
+  width: min(340px, 86vw); max-height: 72vh; overflow-y: auto;
+  background: rgba(4, 8, 18, 0.94);
+  border: 1px solid rgba(140, 170, 255, 0.3);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: none;
+  font-weight: 300;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+#settings-panel.open { display: block; }
+.set-head {
+  display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: 0.4em; font-size: 12px;
+  color: var(--ink-dim); margin-bottom: 6px;
+}
+#settings-close {
+  background: none; border: none;
+  color: var(--ink-dim); font-size: 15px;
+  cursor: pointer; padding: 6px 8px; touch-action: manipulation;
+}
+.set-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin: 12px 0;
+  font-size: 11px; letter-spacing: 0.25em;
+  color: var(--ink-dim);
+}
+#sound-toggle {
+  background: rgba(235, 240, 255, 0.06);
+  border: 1px solid rgba(140, 170, 255, 0.35);
+  border-radius: 8px;
+  color: var(--ink); font-family: inherit;
+  letter-spacing: 0.25em; font-size: 11px;
+  padding: 7px 16px; cursor: pointer; touch-action: manipulation;
+}
+#settings-name {
+  width: 150px;
+  background: transparent; border: none;
+  border-bottom: 1px solid rgba(235, 240, 255, 0.25);
+  color: var(--ink); font-family: inherit;
+  font-size: 12px; letter-spacing: 0.12em;
+  text-align: right; padding: 6px 2px; outline: none;
+  -webkit-user-select: text; user-select: text;
+}
+.set-debug-head {
+  margin-top: 14px;
+  letter-spacing: 0.4em; font-size: 11px;
+  color: var(--ink-faint);
+}
+#debug-hud {
+  margin-top: 6px; padding: 8px 10px;
+  background: rgba(2, 4, 10, 0.6);
+  border: 1px solid rgba(140, 170, 255, 0.25);
+  border-radius: 8px;
+  color: #bcd2ff;
+  font: 10.5px/1.55 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 38vh; overflow-y: auto;
+  pointer-events: none;
+}
+
+/* ---------- chat (room-local) ---------- */
+#chat {
+  position: fixed; left: 22px; bottom: 22px;
+  width: min(330px, 62vw);
+  z-index: 32;
+  display: flex; flex-direction: column; gap: 6px;
+}
+#chat-toggle {
+  position: absolute; top: -32px; right: 0;
+  background: rgba(4, 8, 18, 0.55);
+  border: 1px solid rgba(140, 170, 255, 0.25);
+  border-radius: 50%;
+  width: 30px; height: 30px;
+  font-size: 14px; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+  opacity: 0.85;
+}
+#chat-toggle.off { opacity: 0.35; }
+#chat-log.hidden { display: none; }
+#chat-log {
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: 170px;
+  overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 24%);
+  mask-image: linear-gradient(to bottom, transparent, black 24%);
+}
+#chat-log::-webkit-scrollbar { display: none; }
+.chat-line {
+  font-weight: 300; font-size: 11.5px;
+  letter-spacing: 0.08em; line-height: 1.5;
+  color: var(--ink-dim);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
+  overflow-wrap: break-word;
+}
+.chat-line .chat-name { color: #9fd8ff; letter-spacing: 0.14em; }
+.chat-line.sys { color: var(--ink-faint); font-style: italic; letter-spacing: 0.14em; }
+#chat-row { display: flex; gap: 6px; align-items: center; }
+#chat-input {
+  flex: 1; min-width: 0;
+  background: rgba(2, 2, 8, 0.55);
+  border: none;
+  border-bottom: 1px solid rgba(235, 240, 255, 0.22);
+  color: var(--ink);
+  font-family: inherit; font-weight: 300; font-size: 12px;
+  letter-spacing: 0.1em;
+  padding: 8px 4px;
+  outline: none;
+  -webkit-user-select: text; user-select: text;
+}
+#chat-input::placeholder { color: var(--ink-faint); }
+#chat-input:focus { border-bottom-color: rgba(159, 216, 255, 0.8); background: rgba(2, 2, 10, 0.75); }
+#chat-send {
+  flex: none;
+  width: 42px; height: 42px; border-radius: 50%;
+  background: rgba(4, 8, 18, 0.55);
+  border: 1px solid rgba(140, 170, 255, 0.35);
+  color: #9fd8ff; font-size: 16px; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+}
+#chat-send:active { background: rgba(140, 170, 255, 0.2); }
+
+/* ---------- drifter name ---------- */
+#name-input {
+  width: min(300px, 70vw);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(235, 240, 255, 0.25);
+  color: var(--ink);
+  font-family: inherit; font-weight: 300; font-size: 13px;
+  letter-spacing: 0.3em;
+  text-align: center;
+  padding: 10px 6px;
+  outline: none;
+  -webkit-user-select: text; user-select: text;
+}
+#name-input::placeholder { color: var(--ink-faint); letter-spacing: 0.22em; }
+#name-input:focus { border-bottom-color: rgba(235, 240, 255, 0.7); }
+
+/* ---------- loading ---------- */
+/* In-flow line inside the start overlay (under the drift button) — the old
+   viewport-centered fixed overlay sat directly on top of the subtitle. */
+#loading {
+  min-height: 1.5em; /* reserve space so the column doesn't jump as counts tick */
+  font-weight: 200; font-size: 12px;
+  letter-spacing: 0.4em; text-indent: 0.4em;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+#loading span::after { content: "…"; animation: dots 1.4s steps(4) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+#loading.done { display: none; }
+
+/* ---------- start overlay ---------- */
+#start-overlay {
+  position: fixed; inset: 0;
+  height: 100vh; height: 100dvh; /* iOS Safari: plain 100vh reaches under the toolbar */
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 18px;
+  background: radial-gradient(ellipse at center, rgba(2,2,6,0.25) 0%, rgba(2,2,6,0.78) 100%);
+  z-index: 50;
+  transition: opacity 1.2s ease;
+}
+#start-overlay.gone { opacity: 0; pointer-events: none; }
+
+#start-overlay h1 {
+  font-weight: 100;
+  font-size: clamp(54px, 11vw, 120px);
+  letter-spacing: 0.5em; text-indent: 0.5em;
+  text-shadow: 0 0 60px rgba(140, 180, 255, 0.45);
+}
+#start-overlay .sub {
+  font-weight: 200; font-size: 15px;
+  letter-spacing: 0.6em; text-indent: 0.6em;
+  color: var(--ink-dim);
+}
+#drift-btn {
+  margin-top: 14px;
+  background: transparent;
+  border: 1px solid rgba(235, 240, 255, 0.35);
+  color: var(--ink);
+  font-family: inherit; font-weight: 300; font-size: 13px;
+  letter-spacing: 0.45em; text-indent: 0.45em;
+  padding: 15px 38px 15px 44px;
+  cursor: pointer;
+  transition: border-color 0.3s, background 0.3s, box-shadow 0.3s;
+}
+#drift-btn:not(:disabled):hover {
+  border-color: rgba(235, 240, 255, 0.9);
+  background: rgba(235, 240, 255, 0.06);
+  box-shadow: 0 0 30px rgba(140, 180, 255, 0.25);
+}
+#drift-btn:disabled { opacity: 0.45; cursor: wait; }
+
+/* ---------- server picker (build 38) ---------- */
+#start-overlay .server-label { margin: 6px 0 -10px; }
+#server-list {
+  display: flex; flex-direction: column; gap: 5px;
+  width: min(300px, 78vw); max-height: 28vh; overflow-y: auto;
+  padding: 2px;
+}
+.server-row {
+  display: flex; justify-content: space-between; align-items: center;
+  background: transparent; border: 1px solid rgba(235, 240, 255, 0.14);
+  color: var(--ink-dim); font-family: inherit; font-weight: 300; font-size: 12px;
+  letter-spacing: 0.3em; text-indent: 0.3em; padding: 9px 16px;
+  cursor: pointer; transition: border-color 0.25s, color 0.25s, background 0.25s;
+}
+.server-row:hover { border-color: rgba(235, 240, 255, 0.45); color: var(--ink); }
+.server-row.sel {
+  border-color: rgba(150, 200, 255, 0.85); color: var(--ink);
+  background: rgba(140, 180, 255, 0.08);
+  box-shadow: 0 0 18px rgba(140, 180, 255, 0.22);
+}
+.server-row.off { justify-content: center; cursor: default; }
+.server-row .server-count { letter-spacing: 0.2em; font-size: 11px; color: var(--ink-faint); }
+.server-row.sel .server-count { color: var(--ink-dim); }
+#start-overlay .tiny {
+  font-weight: 300; font-size: 10px;
+  letter-spacing: 0.35em;
+  color: var(--ink-faint);
+}
+
+/* ---------- touch joystick ---------- */
+#joy-base {
+  position: fixed;
+  width: 112px; height: 112px;
+  border: 1px solid rgba(235, 240, 255, 0.25);
+  border-radius: 50%;
+  display: none;
+  pointer-events: none;
+  z-index: 35;
+  transform: translate(-50%, -50%);
+}
+#joy-knob {
+  position: absolute; left: 50%; top: 50%;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  background: rgba(235, 240, 255, 0.22);
+  transform: translate(-50%, -50%);
+}
+
+/* ---------- jam room: button + bottom sheet (build 13) ---------- */
+#jam-btn {
+  position: fixed; bottom: 160px; left: 50%; transform: translateX(-50%);
+  z-index: 48;
+  background: rgba(122, 224, 255, 0.10);
+  border: 1px solid rgba(122, 224, 255, 0.55); border-radius: 999px;
+  color: #bfeaff; font-family: inherit; letter-spacing: 0.2em;
+  font-size: 11px; text-transform: uppercase;
+  padding: 14px 26px; min-height: 48px;
+  cursor: pointer; touch-action: manipulation;
+}
+#jam-btn:active { background: rgba(122, 224, 255, 0.25); }
+#jam-panel {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  max-height: 72vh; overflow-y: auto;
+  background: rgba(4, 8, 18, 0.96);
+  border-top: 1px solid rgba(122, 224, 255, 0.35);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 16px 28px;
+  transform: translateY(105%);
+  transition: transform 0.25s ease;
+  font-weight: 300;
+  touch-action: manipulation;
+  user-select: none; -webkit-user-select: none;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.6);
+}
+#jam-panel.open { transform: none; }
+.jam-head {
+  display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: 0.35em; font-size: 12px; color: #bfeaff;
+  margin-bottom: 8px;
+}
+#jam-close {
+  background: none; border: none; color: #9fd8ff;
+  font-size: 15px; cursor: pointer; padding: 8px 10px;
+  touch-action: manipulation; min-height: 44px; min-width: 44px;
+}
+.jam-sub {
+  letter-spacing: 0.35em; font-size: 10px; color: var(--ink-dim);
+  margin: 12px 0 6px;
+}
+.jam-transport {
+  display: flex; align-items: center; gap: 10px;
+}
+.jam-bpm-wrap { text-align: center; min-width: 64px; }
+#jam-bpm { font-size: 30px; color: #fff; line-height: 1; }
+.jam-bpm-label { font-size: 9px; letter-spacing: 0.3em; color: var(--ink-dim); }
+.jam-clock {
+  display: flex; align-items: center; gap: 6px; flex: 1;
+  font-size: 11px; letter-spacing: 0.12em; color: var(--ink-dim);
+}
+#jam-clock-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #556; display: inline-block;
+}
+#jam-clock-dot.live { background: #37e6ff; box-shadow: 0 0 10px #37e6ff; }
+.jam-transport button {
+  background: rgba(122, 224, 255, 0.08);
+  border: 1px solid rgba(122, 224, 255, 0.4); border-radius: 10px;
+  color: #bfeaff; font-family: inherit; font-size: 12px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  min-height: 44px; min-width: 52px; padding: 10px 14px;
+  cursor: pointer; touch-action: manipulation;
+}
+.jam-transport button:disabled { opacity: 0.3; }
+.jam-transport button:active:not(:disabled) { background: rgba(122, 224, 255, 0.22); }
+#jam-tap.tapped { background: rgba(122, 224, 255, 0.35); }
+.jam-synth-row { display: flex; gap: 8px; }
+.jam-wave {
+  flex: 1; background: rgba(122, 224, 255, 0.06);
+  border: 1px solid rgba(122, 224, 255, 0.3); border-radius: 10px;
+  color: #bfeaff; font-family: inherit; font-size: 11px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  min-height: 44px; cursor: pointer; touch-action: manipulation;
+}
+.jam-wave.sel { background: rgba(122, 224, 255, 0.22); border-color: #7ae0ff; }
+.jam-knobs {
+  display: flex; gap: 18px; margin-top: 10px;
+  font-size: 11px; letter-spacing: 0.15em; color: var(--ink-dim);
+}
+.jam-knobs label { display: flex; align-items: center; gap: 8px; flex: 1; }
+.jam-knobs input[type="range"] { flex: 1; accent-color: #7ae0ff; }
+/* build 39: the deeper synth gets a compact 3-column knob grid. */
+.jam-knobs.cols3 {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 10px 14px;
+}
+.jam-knobs.cols3 label { min-width: 0; }
+.jam-knobs.cols3 input[type="range"] { min-width: 0; }
+/* build 39: patch presets + key-scale lock. */
+.jam-presets, .jam-scales { align-items: center; margin-top: 10px; }
+.jam-preset-label {
+  font-size: 11px; letter-spacing: 0.15em; color: var(--ink-dim);
+  text-transform: uppercase; margin-right: 2px;
+}
+.jam-preset, .jam-scale {
+  flex: 1; background: rgba(122, 224, 255, 0.06);
+  border: 1px solid rgba(122, 224, 255, 0.3); border-radius: 10px;
+  color: #bfeaff; font-family: inherit; font-size: 11px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  min-height: 40px; cursor: pointer; touch-action: manipulation;
+}
+.jam-preset.sel, .jam-scale.sel { background: rgba(122, 224, 255, 0.22); border-color: #7ae0ff; }
+.jam-preset:active, .jam-scale:active { filter: brightness(1.25); }
+/* ---------- the loop, simplified (build 66) ---------- */
+.jam-loop-top {
+  display: flex; gap: 14px; align-items: center;
+  padding: 12px 14px; margin: 10px 0 4px;
+  background: rgba(122, 224, 255, 0.05);
+  border: 1px solid rgba(122, 224, 255, 0.28); border-radius: 18px;
+}
+.jam-loop-btn {
+  position: relative; width: 84px; height: 84px; flex: 0 0 84px;
+  background: rgba(122, 224, 255, 0.05); border: none; border-radius: 50%;
+  cursor: pointer; touch-action: manipulation; padding: 0;
+}
+.jam-loop-btn svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.loop-ring-bg {
+  fill: none; stroke: rgba(122, 224, 255, 0.18); stroke-width: 5;
+}
+.loop-ring {
+  fill: none; stroke: #7ae0ff; stroke-width: 5; stroke-linecap: round;
+  stroke-dasharray: 169.6; stroke-dashoffset: 169.6;
+  transition: stroke 0.2s;
+}
+.jam-loop-btn.rec .loop-ring { stroke: #ff5d5d; }
+.jam-loop-btn.rec { animation: loop-pulse 1.1s ease-in-out infinite; }
+@keyframes loop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 93, 93, 0.0); }
+  50% { box-shadow: 0 0 22px 2px rgba(255, 93, 93, 0.45); }
+}
+.loop-glyph {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #bfeaff; font-size: 26px;
+}
+.jam-loop-btn.rec .loop-glyph { color: #ff5d5d; }
+.jam-loop-top-info { flex: 1; min-width: 0; }
+.jam-loop-top-title {
+  font-size: 11px; letter-spacing: 0.22em; color: var(--ink-dim);
+  text-transform: uppercase; margin-bottom: 4px;
+}
+.jam-loop-state { font-size: 14px; color: #eaf7ff; letter-spacing: 0.04em; }
+.jam-loop-meta { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.1em; margin-top: 4px; }
+.jam-loop-hold { color: var(--ink-dim); }
+/* ---------- stage builder (build 66) ---------- */
+.jam-stage { display: flex; flex-direction: column; gap: 10px; }
+.jam-stage-hint { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.08em; }
+.jam-stage-models, .jam-stage-placed { display: flex; flex-wrap: wrap; gap: 8px; }
+.jam-stage-models button, .jam-stage-placed button {
+  background: rgba(255, 194, 77, 0.08);
+  border: 1px solid rgba(255, 194, 77, 0.35); border-radius: 10px;
+  color: #ffe3b3; font-family: inherit; font-size: 12px; letter-spacing: 0.06em;
+  min-height: 44px; padding: 8px 14px; cursor: pointer; touch-action: manipulation;
+}
+.jam-stage-placed button.sel { background: rgba(255, 194, 77, 0.25); border-color: #ffc24d; }
+.jam-stage-models button:active, .jam-stage-placed button:active { filter: brightness(1.3); }
+.jam-stage-empty { font-size: 12px; color: var(--ink-faint); font-style: italic; }
+.jam-stage-edit { display: flex; flex-direction: column; gap: 10px; }
+.jam-stage-edit-name { font-size: 13px; color: #ffc24d; letter-spacing: 0.1em; }
+.jam-stage-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+.jam-stage-sliders label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 0.12em; color: var(--ink-dim); text-transform: uppercase;
+}
+.jam-stage-sliders input[type="range"] { flex: 1; min-width: 0; }
+.jam-stage-edit button, .jam-stage-clear {
+  background: rgba(255, 194, 77, 0.08);
+  border: 1px solid rgba(255, 194, 77, 0.35); border-radius: 10px;
+  color: #ffe3b3; font-family: inherit; font-size: 12px; letter-spacing: 0.1em;
+  min-height: 44px; cursor: pointer; touch-action: manipulation;
+}
+.jam-stage-edit button:active, .jam-stage-clear:active { filter: brightness(1.3); }
+/* ---------- front of house (build 66) ---------- */
+.jam-foh { display: flex; flex-direction: column; gap: 10px; }
+.jam-foh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.jam-foh-grid label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 0.12em; color: var(--ink-dim); text-transform: uppercase;
+}
+.jam-foh-grid input[type="range"] { flex: 1; min-width: 0; }
+.jam-foh-color input[type="color"] {
+  width: 44px; height: 32px; padding: 2px; border: 1px solid rgba(122, 224, 255, 0.3);
+  border-radius: 8px; background: transparent; cursor: pointer;
+}
+.jam-foh-check { cursor: pointer; }
+.jam-foh-check input[type="checkbox"] { width: 22px; height: 22px; accent-color: #7ae0ff; }
+.jam-foh-reset {
+  background: rgba(122, 224, 255, 0.06);
+  border: 1px solid rgba(122, 224, 255, 0.3); border-radius: 10px;
+  color: #bfeaff; font-family: inherit; font-size: 12px; letter-spacing: 0.1em;
+  min-height: 44px; cursor: pointer; touch-action: manipulation;
+}
+/* ---------- model room workbench (build 66) ---------- */
+#workshop-btn {
+  position: fixed; right: 18px; bottom: calc(96px + env(safe-area-inset-bottom));
+  z-index: 40;
+  background: rgba(10, 16, 34, 0.85);
+  border: 1px solid rgba(159, 216, 255, 0.5); border-radius: 999px;
+  color: #d8ecff; font-family: inherit; font-size: 14px; letter-spacing: 0.1em;
+  min-height: 52px; padding: 12px 20px; cursor: pointer; touch-action: manipulation;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+#workshop-btn:active { transform: scale(0.95); }
+#workshop-panel {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  max-height: 72vh; overflow-y: auto;
+  background: rgba(6, 10, 24, 0.96);
+  border-top: 1px solid rgba(159, 216, 255, 0.35);
+  border-radius: 18px 18px 0 0;
+  padding: 14px 16px calc(20px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 10px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.ws-head {
+  display: flex; align-items: center; justify-content: space-between;
+  color: #d8ecff; font-size: 14px; letter-spacing: 0.18em;
+}
+.ws-head button {
+  background: transparent; border: 1px solid rgba(159, 216, 255, 0.3);
+  border-radius: 10px; color: #d8ecff; font-size: 14px;
+  width: 40px; height: 40px; cursor: pointer;
+}
+.ws-sub {
+  font-size: 11px; letter-spacing: 0.2em; color: var(--ink-dim);
+  text-transform: uppercase; margin-top: 4px;
+}
+.ws-add { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ws-add button, .ws-pieces button, .ws-edit-row button, .ws-save-row button, .ws-models button {
+  background: rgba(159, 216, 255, 0.07);
+  border: 1px solid rgba(159, 216, 255, 0.35); border-radius: 10px;
+  color: #cfeeff; font-family: inherit; font-size: 13px; letter-spacing: 0.06em;
+  min-height: 48px; padding: 8px 10px; cursor: pointer; touch-action: manipulation;
+}
+.ws-add button:active, .ws-pieces button:active, .ws-edit-row button:active,
+.ws-save-row button:active, .ws-models button:active { filter: brightness(1.3); }
+.ws-pieces { display: flex; flex-wrap: wrap; gap: 8px; }
+.ws-pieces button.sel { background: rgba(159, 216, 255, 0.28); border-color: #9fd8ff; }
+.ws-empty { font-size: 12px; color: var(--ink-faint); font-style: italic; }
+.ws-edit { display: flex; flex-direction: column; gap: 10px; }
+.ws-edit-name { font-size: 13px; color: #9fd8ff; letter-spacing: 0.1em; }
+.ws-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+.ws-sliders label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 0.12em; color: var(--ink-dim); text-transform: uppercase;
+}
+.ws-sliders input[type="range"] { flex: 1; min-width: 0; }
+.ws-color input[type="color"] {
+  width: 44px; height: 32px; padding: 2px; border: 1px solid rgba(159, 216, 255, 0.3);
+  border-radius: 8px; background: transparent; cursor: pointer;
+}
+.ws-edit-row { display: flex; gap: 8px; }
+.ws-edit-row button { flex: 1; }
+.ws-save-row { display: flex; gap: 8px; }
+.ws-save-row input {
+  flex: 1; min-width: 0; background: rgba(2, 2, 10, 0.6);
+  border: 1px solid rgba(159, 216, 255, 0.3); border-radius: 10px;
+  color: #eaf7ff; font-family: inherit; font-size: 14px; letter-spacing: 0.06em;
+  padding: 10px 12px; outline: none; min-height: 48px;
+}
+.ws-models { display: flex; flex-direction: column; gap: 8px; }
+.ws-model-row { display: flex; gap: 8px; align-items: center; }
+.ws-model-row .ws-model-load { flex: 1; text-align: left; }
+.ws-model-row .ws-model-del { flex: 0 0 52px; color: #ff9d9d; border-color: rgba(255, 120, 120, 0.4); }
+/* build 69: the room shelf — peer models with maker attribution */
+.ws-roster { font-size: 11px; opacity: 0.65; letter-spacing: 0.04em; font-weight: normal; }
+.ws-shelf-row { display: flex; gap: 8px; align-items: center; }
+.ws-shelf-row .ws-model-load { flex: 1; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+.ws-shelf-by { font-size: 11px; opacity: 0.6; letter-spacing: 0.04em; }
+#jam-keys {
+  display: flex; height: 118px; margin-top: 10px;
+  border: 1px solid rgba(122, 224, 255, 0.25); border-radius: 10px;
+  overflow: hidden; background: #0a0f1e;
+}
+.jam-key {
+  flex: 1; border: none; border-right: 1px solid rgba(122, 224, 255, 0.18);
+  background: linear-gradient(#f4f8ff, #cfd9ee);
+  color: #445; font-family: inherit; font-size: 10px;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 8px; cursor: pointer; touch-action: manipulation;
+}
+.jam-key:last-child { border-right: none; }
+.jam-key.black {
+  flex: 0 0 7.5%; margin: 0 -3.75%; height: 62%; align-self: flex-start;
+  background: linear-gradient(#2a3350, #10142a);
+  border: 1px solid #000; border-radius: 0 0 5px 5px;
+  z-index: 2; color: transparent;
+}
+.jam-key:active { filter: brightness(1.25); }
+.jam-sampler-row { display: flex; gap: 10px; align-items: stretch; }
+#jam-grab {
+  background: rgba(255, 194, 77, 0.10);
+  border: 1px solid rgba(255, 194, 77, 0.5); border-radius: 10px;
+  color: #ffd88a; font-family: inherit; font-size: 11px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  min-height: 56px; padding: 10px 18px;
+  cursor: pointer; touch-action: manipulation;
+}
+#jam-grab:active { background: rgba(255, 194, 77, 0.25); }
+#jam-grab-room
+
+/* ---------- jam mic (build 27) ---------- */
+.jam-mic-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+#jam-mic-btn.on {
+  background: rgba(120, 220, 150, 0.25);
+  border-color: rgba(120, 220, 150, 0.7);
+  color: #c9f5d6;
+}
+.jam-mic-meter {
+  flex: 1; height: 8px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+#jam-mic-meter-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d, #ff5a5a);
+  border-radius: 999px;
+  transition: width 60ms linear;
+}
+.jam-mic-note {
+  color: var(--ink-faint); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin: 2px 0 4px;
+}
+/* ---------- jukebox phone upload (build 27) ---------- */
+#juke-phone-btn { width: 100%; margin-top: 6px; }
+.juke-phone-status {
+  color: var(--ink-dim); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin-top: 6px;
+}
+.juke-phone-status .bar {
+  height: 6px; border-radius: 999px; margin-top: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.juke-phone-status .bar > div {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d);
+  border-radius: 999px;
+}
+ {
+  background: rgba(255, 122, 217, 0.10);
+  border: 1px solid rgba(255, 122, 217, 0.5); border-radius: 10px;
+  color: #ffabe0; font-family: inherit; font-size: 11px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  min-height: 56px; padding: 10px 14px;
+  cursor: pointer; touch-action: manipulation; white-space: nowrap;
+}
+#jam-grab-room
+
+/* ---------- jam mic (build 27) ---------- */
+.jam-mic-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+#jam-mic-btn.on {
+  background: rgba(120, 220, 150, 0.25);
+  border-color: rgba(120, 220, 150, 0.7);
+  color: #c9f5d6;
+}
+.jam-mic-meter {
+  flex: 1; height: 8px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+#jam-mic-meter-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d, #ff5a5a);
+  border-radius: 999px;
+  transition: width 60ms linear;
+}
+.jam-mic-note {
+  color: var(--ink-faint); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin: 2px 0 4px;
+}
+/* ---------- jukebox phone upload (build 27) ---------- */
+#juke-phone-btn { width: 100%; margin-top: 6px; }
+.juke-phone-status {
+  color: var(--ink-dim); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin-top: 6px;
+}
+.juke-phone-status .bar {
+  height: 6px; border-radius: 999px; margin-top: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.juke-phone-status .bar > div {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d);
+  border-radius: 999px;
+}
+:active { background: rgba(255, 122, 217, 0.25); }
+#jam-grab-room
+
+/* ---------- jam mic (build 27) ---------- */
+.jam-mic-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+#jam-mic-btn.on {
+  background: rgba(120, 220, 150, 0.25);
+  border-color: rgba(120, 220, 150, 0.7);
+  color: #c9f5d6;
+}
+.jam-mic-meter {
+  flex: 1; height: 8px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+#jam-mic-meter-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d, #ff5a5a);
+  border-radius: 999px;
+  transition: width 60ms linear;
+}
+.jam-mic-note {
+  color: var(--ink-faint); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin: 2px 0 4px;
+}
+/* ---------- jukebox phone upload (build 27) ---------- */
+#juke-phone-btn { width: 100%; margin-top: 6px; }
+.juke-phone-status {
+  color: var(--ink-dim); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin-top: 6px;
+}
+.juke-phone-status .bar {
+  height: 6px; border-radius: 999px; margin-top: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.juke-phone-status .bar > div {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d);
+  border-radius: 999px;
+}
+:disabled { opacity: 0.6; cursor: default; }
+#jam-grab-room
+
+/* ---------- jam mic (build 27) ---------- */
+.jam-mic-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+#jam-mic-btn.on {
+  background: rgba(120, 220, 150, 0.25);
+  border-color: rgba(120, 220, 150, 0.7);
+  color: #c9f5d6;
+}
+.jam-mic-meter {
+  flex: 1; height: 8px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+#jam-mic-meter-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d, #ff5a5a);
+  border-radius: 999px;
+  transition: width 60ms linear;
+}
+.jam-mic-note {
+  color: var(--ink-faint); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin: 2px 0 4px;
+}
+/* ---------- jukebox phone upload (build 27) ---------- */
+#juke-phone-btn { width: 100%; margin-top: 6px; }
+.juke-phone-status {
+  color: var(--ink-dim); font-size: 11px; letter-spacing: 0.08em;
+  line-height: 1.5; margin-top: 6px;
+}
+.juke-phone-status .bar {
+  height: 6px; border-radius: 999px; margin-top: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.juke-phone-status .bar > div {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #78dc96, #ffc24d);
+  border-radius: 999px;
+}
+.rec {
+  border-color: #ff4d5e; color: #ff8f9a;
+  animation: jam-rec-pulse 1s ease-in-out infinite;
+}
+@keyframes jam-rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0.0); }
+  50% { box-shadow: 0 0 12px 2px rgba(255, 77, 94, 0.55); }
+}
+.jam-room-note {
+  font-size: 11px; letter-spacing: 0.06em; color: #c9a2ff;
+  margin-top: 6px; line-height: 1.5;
+}
+#jam-pads { display: flex; gap: 8px; flex: 1; }
+.jam-pad {
+  flex: 1; min-height: 56px; border-radius: 10px;
+  background: rgba(140, 170, 255, 0.06);
+  border: 1px dashed rgba(140, 170, 255, 0.35);
+  color: var(--ink-dim); font-family: inherit; font-size: 16px;
+  cursor: pointer; touch-action: manipulation;
+}
+.jam-pad.loaded {
+  border-style: solid; border-color: rgba(55, 230, 255, 0.6);
+  background: rgba(55, 230, 255, 0.12); color: #bfeaff;
+}
+.jam-pad:active { filter: brightness(1.3); }
+.jam-hint {
+  font-size: 11px; letter-spacing: 0.08em; color: var(--ink-dim);
+  margin-top: 8px; min-height: 14px;
+}
+.jam-jammers { font-size: 12px; letter-spacing: 0.08em; color: #9fd8ff; }
+.jammer-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 5px; vertical-align: baseline;
+}
+
+/* ---------- jam room: immersive restyle (build 20) ---------- */
+/* dark glass hardware feel; --inst carries the selected instrument's color */
+#jam-panel {
+  --inst: #37e6ff;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(55, 230, 255, 0.07), transparent 55%),
+    rgba(4, 8, 18, 0.96);
+  border-top: 1px solid var(--inst);
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.6), 0 -2px 24px -8px var(--inst);
+  transition: transform 0.25s ease, border-color 0.3s ease;
+}
+.jam-groove-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+}
+#jam-beat-dots { display: flex; gap: 7px; flex: 1; }
+#jam-beat-dots span {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: rgba(140, 170, 255, 0.15);
+  border: 1px solid rgba(140, 170, 255, 0.25);
+  transition: background 0.08s ease, box-shadow 0.08s ease;
+}
+#jam-beat-dots span.on {
+  background: var(--inst);
+  border-color: var(--inst);
+  box-shadow: 0 0 12px var(--inst);
+}
+#jam-beat-dots span.on:first-child { transform: scale(1.25); }
+#jam-metro-toggle {
+  background: rgba(140, 170, 255, 0.06);
+  border: 1px solid rgba(140, 170, 255, 0.35); border-radius: 10px;
+  color: var(--ink-dim); font-family: inherit; font-size: 11px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  min-height: 44px; padding: 10px 14px;
+  cursor: pointer; touch-action: manipulation;
+}
+#jam-metro-toggle.sel {
+  color: #fff; border-color: var(--inst);
+  background: color-mix(in srgb, var(--inst) 18%, transparent);
+  box-shadow: 0 0 14px -4px var(--inst);
+}
+#jam-metro-vol { flex: 1; accent-color: var(--inst); }
+.jam-inst-tabs { display: flex; gap: 8px; }
+.jam-inst-tab {
+  flex: 1; min-height: 48px;
+  background: rgba(140, 170, 255, 0.05);
+  border: 1px solid rgba(140, 170, 255, 0.28); border-radius: 12px;
+  color: var(--ink-dim); font-family: inherit; font-size: 11px;
+  letter-spacing: 0.25em; text-transform: uppercase;
+  cursor: pointer; touch-action: manipulation;
+  transition: all 0.15s ease;
+}
+.jam-inst-tab.sel[data-inst="lead"]  { color: #fff; border-color: #37e6ff; background: rgba(55, 230, 255, 0.16);  box-shadow: 0 0 16px -4px #37e6ff; }
+.jam-inst-tab.sel[data-inst="bass"]  { color: #fff; border-color: #b388ff; background: rgba(179, 136, 255, 0.16); box-shadow: 0 0 16px -4px #b388ff; }
+.jam-inst-tab.sel[data-inst="drums"] { color: #fff; border-color: #ffc24d; background: rgba(255, 194, 77, 0.16);  box-shadow: 0 0 16px -4px #ffc24d; }
+.jam-inst-tab.sel[data-inst="pad"]   { color: #fff; border-color: #ff7ad9; background: rgba(255, 122, 217, 0.16); box-shadow: 0 0 16px -4px #ff7ad9; }
+.jam-inst-panel { margin-top: 10px; }
+#jam-bass-keys {
+  display: flex; height: 118px; margin-top: 10px;
+  border: 1px solid rgba(179, 136, 255, 0.35); border-radius: 10px;
+  overflow: hidden; background: #0d0a1e;
+}
+#jam-drums {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin-top: 2px;
+}
+.jam-drum {
+  min-height: 76px; border-radius: 14px;
+  background: radial-gradient(100% 100% at 50% 0%, rgba(255, 194, 77, 0.14), rgba(255, 194, 77, 0.03));
+  border: 1px solid rgba(255, 194, 77, 0.4);
+  color: #ffd88a; font-family: inherit; font-size: 12px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  cursor: pointer; touch-action: manipulation;
+  transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+.jam-drum:active {
+  transform: scale(0.94);
+  box-shadow: 0 0 22px -2px rgba(255, 194, 77, 0.8);
+  background: radial-gradient(100% 100% at 50% 0%, rgba(255, 194, 77, 0.35), rgba(255, 194, 77, 0.08));
+}
+/* build 63: the loaded sample variant sits under the drum name */
+.jam-drum-var {
+  display: block; margin-top: 5px;
+  font-size: 9px; letter-spacing: 0.14em; color: rgba(255, 216, 138, 0.6);
+}
+/* build 63: a held key glows — the note is sustaining until you lift */
+.jam-key.held {
+  background: linear-gradient(180deg, rgba(122, 224, 255, 0.5), rgba(122, 224, 255, 0.2)) !important;
+  box-shadow: 0 0 16px -2px rgba(122, 224, 255, 0.8);
+}
+/* build 63: synth knob section labels */
+.jam-knob-sub { margin: 8px 0 2px; font-size: 9px; letter-spacing: 0.3em; color: var(--ink-dim); }
+/* build 63: drum sample picker bottom sheet */
+.drum-picker { position: fixed; inset: 0; z-index: 60; }
+.drum-picker[hidden] { display: none; }
+.drum-picker-backdrop { position: absolute; inset: 0; background: rgba(4, 6, 14, 0.6); }
+.drum-picker-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: #0b1122; border-top: 1px solid rgba(255, 194, 77, 0.4);
+  border-radius: 18px 18px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom));
+  max-height: 62vh; overflow-y: auto;
+}
+.drum-picker-title {
+  font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
+  color: #ffd88a; margin-bottom: 10px;
+}
+.drum-picker-row {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 12px 10px; margin-bottom: 6px;
+  background: rgba(255, 194, 77, 0.05);
+  border: 1px solid rgba(255, 194, 77, 0.22); border-radius: 12px;
+  color: #ffe3ae; font-family: inherit; font-size: 14px;
+  cursor: pointer; touch-action: manipulation;
+}
+.drum-picker-row:active { filter: brightness(1.4); }
+.drum-picker-row.sel {
+  border-color: rgba(255, 194, 77, 0.8);
+  background: rgba(255, 194, 77, 0.14);
+}
+.drum-picker-row .drum-picker-state { color: #7ae0ff; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; }
+.drum-picker-hint { margin-top: 10px; font-size: 10px; letter-spacing: 0.1em; color: var(--ink-dim); text-align: center; }
+/* build 63: the undo button dims when there's no layer to peel off */
+#jam-loop-undo.off { opacity: 0.25; }
+/* build 64: delay note-value buttons + the pedalboard footnote */
+.jam-dlydiv-row { margin-top: 8px; }
+.jam-dlydiv {
+  background: rgba(122, 224, 255, 0.06);
+  border: 1px solid rgba(122, 224, 255, 0.3); border-radius: 8px;
+  color: #bfeaff; font-family: inherit; font-size: 12px;
+  padding: 6px 12px; cursor: pointer; touch-action: manipulation;
+}
+.jam-dlydiv.sel {
+  background: rgba(122, 224, 255, 0.22);
+  border-color: rgba(122, 224, 255, 0.8);
+  box-shadow: 0 0 12px -2px rgba(122, 224, 255, 0.6);
+}
+.jam-fx-note { margin-top: 6px; font-size: 10px; letter-spacing: 0.12em; color: var(--ink-dim); }
+#jam-chords { display: flex; gap: 10px; margin-top: 2px; }
+.jam-chord {
+  flex: 1; min-height: 84px; border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: radial-gradient(100% 100% at 50% 0%, rgba(255, 122, 217, 0.14), rgba(255, 122, 217, 0.03));
+  border: 1px solid rgba(255, 122, 217, 0.4);
+  color: #ffc7ea; font-family: inherit;
+  cursor: pointer; touch-action: manipulation;
+  transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+.jam-chord-num { font-size: 10px; letter-spacing: 0.3em; color: var(--ink-dim); }
+.jam-chord-name { font-size: 20px; letter-spacing: 0.1em; }
+.jam-chord:active {
+  transform: scale(0.94);
+  box-shadow: 0 0 22px -2px rgba(255, 122, 217, 0.8);
+  background: radial-gradient(100% 100% at 50% 0%, rgba(255, 122, 217, 0.35), rgba(255, 122, 217, 0.08));
+}
+/* the whole panel breathes on the beat: pads swell with the clock */
+#jam-panel.onbeat .jam-drum,
+#jam-panel.onbeat .jam-chord,
+#jam-panel.onbeat .jam-pad {
+  transform: scale(1.04);
+  filter: brightness(1.25);
+}
+#jam-panel.onbeat #jam-beat-dots span.on { transform: scale(1.35); }
+
+/* ---------- community wall paint mode (build 29: full-screen phone-first redo) ---------- */
+#paint-btn {
+  position: fixed; bottom: 224px; left: 50%; transform: translateX(-50%);
+  z-index: 48;
+  background: rgba(255, 122, 217, 0.10);
+  border: 1px solid rgba(255, 122, 217, 0.55); border-radius: 999px;
+  color: #ffc4ec; font-family: inherit; letter-spacing: 0.2em;
+  font-size: 11px; text-transform: uppercase;
+  padding: 14px 26px; min-height: 48px;
+  cursor: pointer; touch-action: manipulation;
+}
+#paint-btn:active { background: rgba(255, 122, 217, 0.25); }
+#paint-overlay {
+  position: fixed; inset: 0; z-index: 55;
+  height: 100vh; height: 100dvh; /* iOS Safari: plain 100vh reaches under the toolbar */
+  background: #05060d; /* fully opaque: the game scene never shows through */
+  display: flex; flex-direction: column;
+  box-sizing: border-box;
+  padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+  user-select: none; -webkit-user-select: none;
+}
+.paint-head {
+  flex: 0 0 auto;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.paint-head > span {
+  letter-spacing: 0.22em; font-size: 12px; color: #ffc4ec;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.paint-head-btns { display: flex; gap: 8px; flex-shrink: 0; }
+.paint-head-btns button {
+  background: rgba(255, 122, 217, 0.10);
+  border: 1px solid rgba(255, 122, 217, 0.5); border-radius: 999px;
+  color: #ffc4ec; font-family: inherit; font-size: 11px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 10px 16px; min-height: 44px;
+  cursor: pointer; touch-action: manipulation;
+}
+#paint-wrap {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: flex; align-items: center; justify-content: stretch;
+}
+#paint-canvas {
+  /* Element box == 2:1 content box: paintUvFromEvent's getBoundingClientRect
+     math is exact, so strokes land exactly under the finger (build 32). */
+  width: 100%; aspect-ratio: 2 / 1; height: auto;
+  border: 1px solid rgba(255, 122, 217, 0.4); border-radius: 8px;
+  background: #0b0b13;
+  touch-action: none; cursor: crosshair;
+}
+#paint-palette {
+  flex: 0 0 auto;
+  display: flex; flex-direction: row; gap: 10px;
+  overflow-x: auto; overflow-y: hidden;
+  padding: 10px 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+#paint-palette::-webkit-scrollbar { display: none; }
+.paint-swatch {
+  flex: 0 0 auto;
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer; touch-action: manipulation; padding: 0;
+}
+.paint-swatch.sel { border-color: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, 0.5); }
+.paint-tools {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; padding-top: 2px;
+}
+.paint-tools > button {
+  flex: 0 1 auto; min-height: 44px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8e8f2; font-family: inherit; font-size: 11px; letter-spacing: 0.06em;
+  padding: 0 10px; white-space: nowrap;
+  cursor: pointer; touch-action: manipulation;
+}
+#paint-eraser, #paint-blend { border: 1px dashed rgba(255, 255, 255, 0.45); }
+#paint-undo { border: 1px solid rgba(255, 255, 255, 0.45); }
+#paint-eraser.sel, #paint-blend.sel {
+  border-style: solid; border-color: #fff; background: rgba(255, 255, 255, 0.14);
+}
+#paint-undo:active { background: rgba(255, 255, 255, 0.16); }
+#paint-sizes { display: flex; gap: 6px; flex-shrink: 0; }
+#paint-sizes button {
+  width: 42px; height: 44px; border-radius: 50%;
+  background: rgba(255, 122, 217, 0.08);
+  border: 1px solid rgba(255, 122, 217, 0.4);
+  color: #ffc4ec; font-family: inherit; font-size: 12px;
+  cursor: pointer; touch-action: manipulation;
+}
+#paint-sizes button.sel { background: rgba(255, 122, 217, 0.3); border-color: #ffc4ec; }
+.paint-hint {
+  flex: 0 0 auto;
+  margin-top: 6px; text-align: center;
+  font-size: 10px; letter-spacing: 0.12em; color: var(--ink-faint);
+}
+
+/* ---------- sound unlock pill (build 30) ----------
+   iOS Safari locks audio until a real user gesture. One floating pill
+   covers both audio paths (WebAudio jam + jukebox media element): the tap
+   resumes the AudioContext and starts the current track at the room's
+   wall-clock offset. Complements the in-panel "tap to join the music"
+   watchdog path — this one is visible even with the jukebox closed. */
+#sound-pill {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 70;
+  background: rgba(20, 20, 30, 0.94);
+  border: 1px solid rgba(255, 122, 217, 0.6); border-radius: 999px;
+  color: #ffc4ec; font-family: inherit; font-size: 13px; letter-spacing: 0.08em;
+  padding: 14px 22px; min-height: 48px;
+  cursor: pointer; touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+  animation: sound-pill-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sound-pill-pulse {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.05); }
+}
+
+/* ---------- jukebox: button + panel (build 21) ---------- */
+#juke-btn {
+  position: fixed; bottom: 288px; left: 50%; transform: translateX(-50%);
+  z-index: 48;
+  background: rgba(141, 255, 122, 0.10);
+  border: 1px solid rgba(141, 255, 122, 0.55); border-radius: 999px;
+  color: #d2ffc4; font-family: inherit; letter-spacing: 0.2em;
+  font-size: 11px; text-transform: uppercase;
+  padding: 14px 26px; min-height: 48px;
+  cursor: pointer; touch-action: manipulation;
+}
+#juke-btn:active { background: rgba(141, 255, 122, 0.25); }
+
+/* ---------- journey room: zone banner (build 36) ---------- */
+#zone-name {
+  position: fixed; top: 12%; left: 0; right: 0; z-index: 40;
+  text-align: center; pointer-events: none;
+  font-size: 26px; letter-spacing: 0.42em; text-indent: 0.42em;
+  color: rgba(232, 244, 255, 0.92);
+  text-shadow: 0 0 18px rgba(122, 242, 255, 0.55), 0 2px 8px rgba(0, 0, 0, 0.6);
+  opacity: 0; transition: opacity 0.9s ease;
+  font-weight: 300;
+}
+#zone-name.show { opacity: 1; }
+
+/* ---------- journey room: like + follow pill (build 33) ---------- */
+#juke-social-pill {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 356px; z-index: 48;
+  display: flex; gap: 10px; align-items: center;
+}
+#juke-social-pill button {
+  background: rgba(4, 10, 20, 0.82);
+  border: 1px solid rgba(122, 242, 255, 0.5); border-radius: 999px;
+  color: #d2f6ff; font-family: inherit; font-size: 14px;
+  padding: 10px 18px; min-height: 44px;
+  cursor: pointer; touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+#juke-social-pill button.liked { border-color: #ff6b9d; color: #ffb3cb; }
+#juke-follow-menu {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  background: rgba(4, 10, 20, 0.96);
+  border: 1px solid rgba(122, 242, 255, 0.4); border-radius: 12px;
+  padding: 6px; min-width: 180px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#juke-follow-menu a {
+  color: #d2f6ff; text-decoration: none; font-size: 14px;
+  padding: 10px 14px; border-radius: 8px;
+}
+#juke-follow-menu a:active { background: rgba(122, 242, 255, 0.15); }
+#juke-panel {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  max-height: 72vh; overflow-y: auto;
+  background: rgba(4, 12, 8, 0.96);
+  border-top: 1px solid rgba(141, 255, 122, 0.35);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 16px 28px;
+  font-weight: 300;
+  touch-action: manipulation;
+  user-select: none; -webkit-user-select: none;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.6);
+}
+.juke-head {
+  display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: 0.35em; font-size: 12px; color: #d2ffc4;
+  margin-bottom: 8px;
+}
+#juke-close {
+  background: none; border: none; color: #bfe9b0;
+  font-size: 15px; cursor: pointer; padding: 8px 10px;
+  touch-action: manipulation; min-height: 44px; min-width: 44px;
+}
+/* Build 43: clear-the-line control + holder indicator. */
+#juke-clear {
+  background: none; border: none; color: #bfe9b0;
+  font-size: 11px; letter-spacing: 0.25em; cursor: pointer; padding: 8px 10px;
+  touch-action: manipulation; min-height: 44px; min-width: 44px;
+}
+.juke-holder {
+  font-size: 10px; letter-spacing: 0.12em; color: rgba(210, 255, 196, 0.55);
+  margin-right: 4px;
+}
+.juke-now { margin-bottom: 6px; }
+.juke-now-title {
+  font-size: 15px; color: #f0ffe9; letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.juke-now-sub { font-size: 11px; color: var(--ink-dim); margin: 2px 0 8px; letter-spacing: 0.1em; }
+.juke-now-sub span + span { margin-left: 10px; }
+.juke-progress {
+  height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.10);
+  overflow: hidden; margin-bottom: 10px;
+}
+#juke-progress-fill {
+  height: 100%; width: 0%; border-radius: 2px;
+  background: linear-gradient(90deg, #8dff7a, #d2ffc4);
+  transition: none;
+}
+#juke-progress-fill.pulse { animation: juke-pulse 1.6s ease-in-out infinite; width: 100%; }
+@keyframes juke-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+.juke-now-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.juke-now-row button {
+  background: rgba(141, 255, 122, 0.10); border: 1px solid rgba(141, 255, 122, 0.4);
+  border-radius: 8px; color: #d2ffc4; font-family: inherit;
+  font-size: 11px; letter-spacing: 0.1em; padding: 9px 12px; min-height: 40px;
+  cursor: pointer; touch-action: manipulation;
+}
+.juke-now-row button:disabled { opacity: 0.35; cursor: default; }
+.juke-now-row button:active:not(:disabled) { background: rgba(141, 255, 122, 0.25); }
+#juke-join.pulse {
+  animation: juke-join-pulse 1.2s ease-in-out infinite;
+  border-color: #8dff7a; font-weight: 600;
+}
+@keyframes juke-join-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(141, 255, 122, 0.5); }
+  50% { box-shadow: 0 0 18px 4px rgba(141, 255, 122, 0.5); }
+}
+.juke-countdown {
+  margin-top: 8px; font-size: 12px; letter-spacing: 0.1em; color: #ffe95c;
+}
+.juke-vol-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  font-size: 11px; letter-spacing: 0.2em; color: var(--ink-dim);
+}
+.juke-vol-row input[type="range"] { flex: 1; accent-color: #8dff7a; }
+.juke-sub {
+  letter-spacing: 0.35em; font-size: 10px; color: var(--ink-dim);
+  margin: 12px 0 6px;
+}
+.juke-queue { display: flex; flex-direction: column; gap: 6px; max-height: 22vh; overflow-y: auto; }
+.juke-empty { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.08em; padding: 6px 0; }
+.juke-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 6px; padding: 4px 2px;
+  font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: #8dff7a; border-bottom: 1px solid rgba(141, 255, 122, 0.25);
+}
+.juke-row {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(141, 255, 122, 0.18); border-radius: 8px;
+  padding: 8px 10px;
+}
+.juke-row-title {
+  flex: 1; font-size: 12px; color: #eef; letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.juke-row-meta { font-size: 10px; color: var(--ink-dim); letter-spacing: 0.08em; white-space: nowrap; }
+.juke-rm {
+  background: none; border: 1px solid rgba(255, 120, 120, 0.4); border-radius: 6px;
+  color: #ff9d9d; font-size: 11px; padding: 6px 9px; min-height: 36px;
+  cursor: pointer; touch-action: manipulation;
+}
+.juke-add-row { display: flex; gap: 8px; margin-top: 10px; }
+#juke-add-url {
+  flex: 1; background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(141, 255, 122, 0.3); border-radius: 8px;
+  color: #eef; font-family: inherit; font-size: 13px;
+  padding: 10px 12px; min-height: 44px; min-width: 0;
+}
+#juke-add-url::placeholder { color: var(--ink-faint); }
+#juke-add-btn {
+  background: rgba(141, 255, 122, 0.14); border: 1px solid rgba(141, 255, 122, 0.55);
+  border-radius: 8px; color: #d2ffc4; font-family: inherit;
+  font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 10px 16px; min-height: 44px; cursor: pointer; touch-action: manipulation;
+  white-space: nowrap;
+}
+#juke-add-btn:active { background: rgba(141, 255, 122, 0.28); }
+.juke-hint {
+  margin-top: 10px; font-size: 11px; letter-spacing: 0.08em;
+  color: var(--ink-faint); text-align: center;
+}
+/* Build 73: link diagnostic — tiny mono readout for cross-phone debugging */
+.juke-diag {
+  margin-top: 6px; font-size: 10px; letter-spacing: 0.06em;
+  color: var(--ink-dim); text-align: center; font-family: monospace;
+  opacity: 0.8;
+}
+/* Build 25: provider players are permanently invisible — 1px, off-screen,
+   no pointer events. Never display:none (that throttles some players). */
+.juke-embed { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
+.juke-embed iframe { display: block; border: none; width: 1px !important; height: 1px !important; }
+/* Theatre (build 76): the 3D-anchored video layer. Fixed 960x540 (16:9);
+   every frame a CSS matrix3d homography pins it onto the cinema screen
+   mesh, so the video lives on the wall, in the space. */
+#theatre-screen3d {
+  position: fixed; left: 0; top: 0; width: 960px; height: 540px;
+  transform-origin: 0 0; z-index: 30; overflow: hidden; background: #000;
+}
+#theatre-screen3d-slot, #theatre-screen3d iframe { width: 100% !important; height: 100% !important; border: none; display: block; }
+/* Theatre (build 76): slim control strip — the video is on the big screen now. */
+#theatre-panel {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  transform: translateX(-50%);
+  width: min(94vw, 520px); z-index: 40;
+  background: rgba(8, 4, 6, 0.92); border: 1px solid rgba(255, 85, 102, 0.35);
+  border-radius: 12px; padding: 10px 12px; box-shadow: 0 0 60px rgba(255, 85, 102, 0.15);
+}
+.theatre-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; letter-spacing: 0.18em; color: #ff8899; margin-bottom: 6px;
+}
+.theatre-head #theatre-close { margin-left: auto; }
+.theatre-by { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.04em; }
+.theatre-screen-note {
+  font-size: 11px; color: var(--ink-dim); text-align: center;
+  letter-spacing: 0.04em; margin-bottom: 8px;
+}
+.theatre-controls { display: flex; gap: 8px; }
+.theatre-link { /* build 79: sync diagnostic line */
+  font-size: 10px; color: var(--ink-dim); text-align: center;
+  letter-spacing: 0.04em; margin-top: 6px; opacity: 0.8;
+}
+.theatre-controls input {
+  flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px; padding: 8px 10px; color: var(--ink); font-size: 13px;
+}
+/* Jam monitor (build 75): tiny theatre volume strip in the jam UI. */
+/* Build 77: living-room mutes — mute the video room or the sound room
+   independently, from either room; both on by default. */
+.mini-mutebtn {
+  flex: none; width: 34px; height: 34px; padding: 0;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px; font-size: 16px; cursor: pointer; color: var(--ink);
+  touch-action: manipulation;
+}
+.mini-mutebtn.muted { background: rgba(255,85,102,0.18); border-color: rgba(255,85,102,0.5); }
+.jam-head-btns { display: flex; align-items: center; gap: 6px; }
+.jam-head .mini-mutebtn { width: 32px; height: 32px; font-size: 14px; }
+.jam-theatre .mini-mutebtn { width: 28px; height: 28px; font-size: 13px; }
+.jam-theatre {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--ink-dim);
+}
+.jam-theatre input { width: 80px; }
+
+/* Build 30: phone-visible net status pill (touch devices only; created and
+   updated by js/net.js). Always visible while net is up: ○ offline /
+   ○ finding others… / ○ connecting… / ○ couldn't connect · retrying… /
+   ● N here. pointer-events:none so it never eats game touches. */
+#net-pill {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 76px); /* clears the peer-count line at 46px */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 31;
+  pointer-events: none;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .03em;
+  color: #cfe3ff;
+  background: rgba(8, 12, 24, .72);
+  border: 1px solid rgba(140, 180, 255, .28);
+  border-radius: 999px;
+  padding: 3px 12px;
+  white-space: nowrap;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+#net-pill[data-cls='on'] { color: #9dffb0; border-color: rgba(120, 255, 160, .38); }
+#net-pill[data-cls='warn'] { color: #ffc98a; border-color: rgba(255, 190, 120, .45); }
+#net-pill[data-cls='off'] { color: #8a8f9d; border-color: rgba(140, 150, 170, .25); }
+#net-pill[data-cls='relay'] { color: #a9c6ff; border-color: rgba(140, 170, 255, .42); }
+/* Build 31: ?debug=net on-screen net log (created by js/net.js only when
+   the URL carries ?debug=net — zero DOM/UI change otherwise). Small
+   toggleable monospace panel; sits above the paint overlay (z 55) so the
+   log stays visible while diagnosing. Tap the header to collapse. */
+#net-log {
+  position: fixed;
+  left: 8px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  width: min(74vw, 340px);
+  max-height: 36vh;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(5, 6, 13, .93);
+  border: 1px solid #3a3f5a;
+  border-radius: 8px;
+  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #bfe2ff;
+}
+#net-log-head {
+  padding: 6px 8px;
+  background: #1a1e33;
+  color: #fff;
+  font-weight: bold;
+  letter-spacing: .04em;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  flex: 0 0 auto;
+}
+#net-log-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 8px 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---------------- couch co-op (build 34) ----------------
+   Offline LAN multiplayer ceremony: fullscreen modal, phone-first. */
+#couch-panel {
+  position: fixed; z-index: 60;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(390px, 94vw); max-height: 88vh; overflow-y: auto;
+  background: rgba(4, 8, 18, 0.97);
+  border: 1px solid rgba(150, 220, 255, 0.35);
+  border-radius: 16px;
+  padding: 14px 18px 20px;
+  font-weight: 300; color: var(--ink);
+  box-shadow: 0 12px 60px rgba(0, 0, 0, 0.7);
+  -webkit-overflow-scrolling: touch;
+}
+.couch-head {
+  display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: 0.35em; font-size: 12px; color: var(--ink-dim);
+  margin-bottom: 10px;
+}
+#couch-close {
+  background: none; border: none; color: var(--ink-dim);
+  font-size: 16px; cursor: pointer; padding: 6px 8px;
+  touch-action: manipulation;
+}
+.couch-screen { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.couch-blurb {
+  text-align: center; font-size: 14px; line-height: 1.5;
+  color: var(--ink-dim); margin: 2px 0 4px; max-width: 300px;
+}
+.couch-blurb b { color: var(--ink); font-weight: 600; }
+.couch-tiny { font-size: 11px; color: var(--ink-dim); opacity: 0.75; text-align: center; }
+.couch-big-btn {
+  width: 100%; padding: 13px 10px; font-size: 15px;
+  background: rgba(150, 220, 255, 0.10);
+  border: 1px solid rgba(150, 220, 255, 0.45); border-radius: 10px;
+  color: var(--ink); cursor: pointer; touch-action: manipulation;
+}
+.couch-big-btn:active { background: rgba(150, 220, 255, 0.22); }
+.couch-quiet-btn {
+  padding: 9px 14px; font-size: 13px;
+  background: none; border: 1px solid rgba(235, 240, 255, 0.18);
+  border-radius: 8px; color: var(--ink-dim);
+  cursor: pointer; touch-action: manipulation;
+}
+.couch-steps {
+  margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.65;
+  color: var(--ink-dim); align-self: stretch;
+}
+.couch-steps b { color: var(--ink); }
+.couch-qr {
+  background: #fff; border-radius: 10px; padding: 0;
+  image-rendering: pixelated;
+  box-shadow: 0 0 0 6px #fff, 0 4px 24px rgba(150, 220, 255, 0.25);
+  margin: 6px 0;
+}
+.couch-status {
+  font-size: 13px; color: var(--ink-dim); text-align: center;
+  min-height: 20px;
+}
+.couch-sub {
+  font-size: 10px; letter-spacing: 0.3em; color: var(--ink-dim);
+  opacity: 0.7; margin-top: 4px; align-self: flex-start;
+}
+.couch-roster { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
+.couch-peer {
+  font-size: 14px; padding: 8px 12px;
+  background: rgba(150, 220, 255, 0.07);
+  border: 1px solid rgba(150, 220, 255, 0.2); border-radius: 8px;
+}
+.couch-empty { font-size: 13px; color: var(--ink-dim); opacity: 0.7; }
+/* camera viewfinder with a corner scan frame */
+.couch-view {
+  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  border-radius: 12px; overflow: hidden; background: #000;
+}
+.couch-view video { width: 100%; height: 100%; object-fit: cover; }
+.couch-frame {
+  position: absolute; inset: 18%;
+  border: 2px solid rgba(150, 220, 255, 0.85); border-radius: 12px;
+  box-shadow: 0 0 0 400px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+#couch-join-code {
+  width: 100%; box-sizing: border-box;
+  background: rgba(235, 240, 255, 0.05); color: var(--ink);
+  border: 1px solid rgba(235, 240, 255, 0.2); border-radius: 8px;
+  font-size: 11px; font-family: monospace; padding: 8px;
+  word-break: break-all;
+}
+#couch-join-manual { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+/* settings panel entry row */
+.couch-set-row { display: flex; gap: 8px; margin: 8px 0 4px; }
+.couch-set-row button {
+  flex: 1; padding: 10px 6px; font-size: 13px;
+  background: rgba(150, 220, 255, 0.08);
+  border: 1px solid rgba(150, 220, 255, 0.35); border-radius: 8px;
+  color: var(--ink); cursor: pointer; touch-action: manipulation;
+}
+#couch-set-status { margin: 6px 0; }
+#couch-set-status button {
+  margin-top: 6px; padding: 8px 12px; font-size: 12px;
+  background: none; border: 1px solid rgba(235, 240, 255, 0.25);
+  border-radius: 8px; color: var(--ink-dim); cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* ---------- lead chord pads + rhythm sequencer (build 39) ---------- */
+/* multi-touch surfaces: the finger lands and the note fires — no gesture
+   arbitration stealing the second finger on these strips. */
+#jam-keys, #jam-bass-keys, #jam-drums, #jam-chords, #jam-lead-chords, #jam-seq-grid { touch-action: none; }
+.jam-chords-sub { margin-top: 10px; }
+.jam-lead-chords { display: flex; gap: 8px; margin-top: 2px; }
+.jam-lead-chord {
+  flex: 1; min-height: 52px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(100% 100% at 50% 0%, rgba(122, 224, 255, 0.16), rgba(122, 224, 255, 0.04));
+  border: 1px solid rgba(122, 224, 255, 0.45);
+  color: #cfeeff; font-family: inherit; font-size: 15px; letter-spacing: 0.08em;
+  cursor: pointer; touch-action: none;
+  transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+.jam-lead-chord:active {
+  transform: scale(0.92);
+  box-shadow: 0 0 20px -2px rgba(122, 224, 255, 0.8);
+  background: radial-gradient(100% 100% at 50% 0%, rgba(122, 224, 255, 0.4), rgba(122, 224, 255, 0.1));
+}
+#jam-panel.onbeat .jam-lead-chord { transform: scale(1.04); filter: brightness(1.25); }
+.jam-seq-head { display: flex; align-items: center; gap: 12px; }
+#jam-seq-toggle {
+  padding: 10px 18px; border-radius: 12px; font-family: inherit; font-size: 14px;
+  letter-spacing: 0.1em; cursor: pointer; touch-action: manipulation;
+  background: rgba(122, 224, 255, 0.06); border: 1px solid rgba(122, 224, 255, 0.4);
+  color: #cfeeff;
+}
+#jam-seq-toggle.sel {
+  background: radial-gradient(100% 100% at 50% 0%, rgba(122, 224, 255, 0.35), rgba(122, 224, 255, 0.1));
+  box-shadow: 0 0 18px -2px rgba(122, 224, 255, 0.7); color: #fff;
+}
+.jam-seq-state { font-size: 12px; color: #bfeaff; letter-spacing: 0.04em; }
+#jam-seq-grid { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.jam-seq-row { display: flex; align-items: center; gap: 3px; }
+.jam-seq-label {
+  flex: 0 0 42px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.jam-seq-step {
+  flex: 1; min-height: 36px; border-radius: 6px; padding: 0;
+  background: rgba(122, 224, 255, 0.05); border: 1px solid rgba(122, 224, 255, 0.18);
+  cursor: pointer; touch-action: none;
+}
+.jam-seq-step.bar { margin-left: 5px; }
+.jam-seq-step.on {
+  background: rgba(122, 224, 255, 0.45); border-color: rgba(122, 224, 255, 0.8);
+}
+.jam-seq-step.now { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.65); }
+.jam-seq-step.on.now { background: rgba(160, 235, 255, 0.75); }
+.jam-seq-presets { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.jam-seq-preset, #jam-seq-clear {
+  padding: 8px 14px; border-radius: 10px; font-family: inherit; font-size: 12px;
+  letter-spacing: 0.08em; cursor: pointer; touch-action: manipulation;
+  background: rgba(122, 224, 255, 0.06); border: 1px solid rgba(122, 224, 255, 0.35);
+  color: #cfeeff;
+}
+.jam-seq-preset:active, #jam-seq-clear:active { transform: scale(0.94); }
+.jam-seq-swing { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); margin-left: auto; }
+.jam-seq-swing input { width: 90px; }
+
+/* ---------- build 40: iPhone Safari hardening ----------
+   The phone is the whole point. One block, last in the file, so it wins
+   the cascade over the legacy duplicates above. Canvas untouched. */
+
+/* iOS inflates text under ~12px and shifts layouts — lock text scaling. */
+html { -webkit-text-size-adjust: 100%; }
+
+/* iOS Safari zooms the page when a <16px input takes focus (it has ignored
+   user-scalable=no since iOS 10). All text entry rides at 16px so the
+   layout never jumps under the finger. */
+#chat-input, #name-input, #settings-name, #juke-add-url, #friend-add-input,
+#couch-join-code { font-size: 16px; }
+
+/* start overlay: clear the notch / Dynamic Island, and scroll instead of
+   clipping if the column ever runs taller than the phone. */
+#start-overlay {
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow-y: auto;
+}
+#drift-btn { touch-action: manipulation; }
+#server-list {
+  max-height: 28vh; max-height: 28dvh; /* real viewport under the toolbar */
+  overscroll-behavior: contain; /* scroll momentum stays inside the sheet */
+}
+.server-row { touch-action: manipulation; } /* no double-tap zoom delay */
+
+/* bottom sheets: clear the home indicator, size against the real viewport. */
+#jam-panel {
+  max-height: 72vh; max-height: 72dvh;
+  padding: 12px 16px calc(28px + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+#juke-panel {
+  max-height: 72vh; max-height: 72dvh;
+  padding: 12px 16px calc(28px + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+#settings-panel {
+  top: calc(62px + env(safe-area-inset-top));
+  max-height: 72vh; max-height: 72dvh;
+  overscroll-behavior: contain;
+}
+#couch-panel {
+  max-height: 88vh; max-height: 88dvh;
+  overscroll-behavior: contain;
+}
+
+/* fixed chrome clears the notch + home indicator. */
+#gear-btn {
+  top: calc(14px + env(safe-area-inset-top));
+  left: calc(14px + env(safe-area-inset-left));
+}
+#realm-name { top: calc(22px + env(safe-area-inset-top)); }
+#echo-counter { top: calc(22px + env(safe-area-inset-top)); }
+#peer-count { top: calc(46px + env(safe-area-inset-top)); }
+#controls-hint { bottom: calc(26px + env(safe-area-inset-bottom)); }
+#mute-label {
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  right: calc(26px + env(safe-area-inset-right));
+}
+#chat {
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  left: calc(22px + env(safe-area-inset-left));
+}
+#net-log { left: calc(8px + env(safe-area-inset-left)); }
+#zone-name { top: calc(12% + env(safe-area-inset-top)); }
+
+/* links inside panels: no double-tap zoom delay either. */
+#juke-follow-menu a { touch-action: manipulation; }
+
+/* MIC row: the mic + mute buttons never had base styles — iOS rendered
+   them as tiny native buttons. Now they match the jam hardware. */
+#jam-mic-btn, #jam-mic-mute {
+  background: rgba(122, 224, 255, 0.08);
+  border: 1px solid rgba(122, 224, 255, 0.4); border-radius: 10px;
+  color: #bfeaff; font-family: inherit; font-size: 12px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  min-height: 44px; padding: 10px 16px;
+  cursor: pointer; touch-action: manipulation;
+}
+#jam-mic-btn:active, #jam-mic-mute:active { background: rgba(122, 224, 255, 0.22); }
+
+/* build 41: per-source mixer strip — 2x2 phone-friendly faders */
+.jam-mix-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+  margin: 6px 0 2px;
+}
+.jam-mix-row label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; letter-spacing: 0.08em; color: var(--ink-dim);
+  min-height: 40px; touch-action: manipulation;
+}
+.jam-mix-row input[type="range"] {
+  flex: 1; min-width: 0; height: 32px; cursor: pointer;
+  touch-action: pan-x;
+}
+
+/* build 41: room voice — talk button live pulse, loop opt-in, talkers line.
+   Appended last so it wins the cascade (this file carries older copies). */
+.jam-mic-row { flex-wrap: wrap; }
+#jam-talk-btn.live {
+  background: rgba(255, 90, 90, 0.28);
+  border-color: rgba(255, 90, 90, 0.8);
+  color: #ffd9d9;
+  animation: talkPulse 1.6s ease-in-out infinite;
+}
+@keyframes talkPulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(255, 90, 90, 0); }
+  50% { box-shadow: 0 0 12px rgba(255, 90, 90, 0.55); }
+}
+#jam-mic-loop.sel {
+  background: rgba(179, 136, 255, 0.25);
+  border-color: rgba(179, 136, 255, 0.7);
+  color: #e2d4ff;
+}
+.jammer-talking { color: #ffd9d9; font-weight: 600; }
+
+/* build 41: endless journey chrome — return button, jam mute, minimap */
+#journey-chrome {
+  position: fixed;
+  top: calc(64px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  z-index: 30; pointer-events: none;
+}
+#journey-chrome button {
+  pointer-events: auto;
+  background: rgba(10, 14, 30, 0.72);
+  border: 1px solid rgba(122, 224, 255, 0.4); border-radius: 12px;
+  color: #cfeeff; font-family: inherit; font-size: 13px; letter-spacing: 0.08em;
+  min-height: 44px; padding: 10px 14px; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+#journey-chrome button:active { transform: scale(0.94); }
+#journey-jammute.off { opacity: 0.85; }
+/* build 65: minimap moved bottom-left + shrunk (floats above the chat row) */
+#journey-minimap {
+  pointer-events: none;
+  position: fixed;
+  left: calc(14px + env(safe-area-inset-left));
+  bottom: calc(92px + env(safe-area-inset-bottom));
+  width: 88px; height: 88px; border-radius: 50%;
+  border: 1px solid rgba(122, 224, 255, 0.35);
+  background: rgba(6, 8, 18, 0.66);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+/* build 49: manta-ray tap feedback — quiet toast, bottom-center */
+#journey-toast {
+  position: fixed;
+  left: 50%; bottom: calc(110px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(10px);
+  background: rgba(8, 14, 30, 0.85);
+  border: 1px solid rgba(157, 184, 221, 0.45); border-radius: 18px;
+  color: #d8e8ff; font-size: 13px; letter-spacing: 0.04em;
+  padding: 9px 16px; white-space: nowrap;
+  opacity: 0; transition: opacity 0.35s ease, transform 0.35s ease;
+  pointer-events: none; z-index: 31;
+}
+#journey-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- build 47: chord readout ---------- */
+.jam-chord-wrap { text-align: center; min-width: 64px; }
+#jam-chord-disp { font-size: 30px; color: #ffc7ea; line-height: 1; min-height: 30px; }
+#jam-chord-disp.hit { animation: jam-chord-pop 0.45s ease; }
+@keyframes jam-chord-pop {
+  0% { transform: scale(1.4); filter: brightness(1.7); }
+  100% { transform: scale(1); filter: none; }
+}
+#jam-chord-who { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- build 47: build stamp on the start overlay ---------- */
+#build-stamp {
+  position: absolute; bottom: calc(10px + env(safe-area-inset-bottom)); right: 14px;
+  font-size: 10px; letter-spacing: 0.22em; color: var(--ink-dim); opacity: 0.75;
+}
+
+/* build 68: sculpt mode — canvas-first floating HUD, big touch targets */
+#sculpt-hud { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
+#sculpt-hud > * { pointer-events: auto; }
+.sc-top {
+  position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+#sc-name {
+  color: #9fd8ff; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+  margin-right: auto; text-shadow: 0 1px 8px rgba(0,0,0,0.9); white-space: nowrap;
+}
+.sc-top button, .sc-detail button {
+  min-width: 46px; min-height: 46px; padding: 6px 10px; border-radius: 12px;
+  background: rgba(6, 10, 24, 0.82); border: 1px solid rgba(159, 216, 255, 0.35);
+  color: #cfeeff; font-family: inherit; font-size: 14px; cursor: pointer; touch-action: manipulation;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.sc-detail { display: flex; gap: 6px; }
+.sc-detail button { font-size: 11px; letter-spacing: 0.08em; }
+.sc-detail button.sel, .sc-top button.on {
+  background: rgba(159, 216, 255, 0.3); border-color: #9fd8ff; color: #fff;
+}
+#sc-done { border-color: rgba(140, 255, 170, 0.5); color: #c9ffd9; font-size: 13px; }
+#sc-undo { border-color: rgba(255, 210, 140, 0.55); color: #ffe3b3; }
+#sc-undo.off { opacity: 0.55; }
+.sc-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+.sc-sliders { display: flex; gap: 22px; justify-content: center; padding: 2px 14px 6px; }
+.sc-sliders label {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #9fd8ff;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.9);
+}
+.sc-sliders input[type=range] { width: 32vw; max-width: 170px; height: 44px; }
+.sc-brushes {
+  display: flex; gap: 10px; overflow-x: auto; padding: 6px 14px 4px;
+  scrollbar-width: none;
+}
+.sc-brushes::-webkit-scrollbar { display: none; }
+.sc-brushes button {
+  flex: 0 0 auto; width: 70px; height: 70px; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: rgba(6, 10, 24, 0.85); border: 1px solid rgba(159, 216, 255, 0.35);
+  color: #cfeeff; font-family: inherit; cursor: pointer; touch-action: manipulation;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.sc-brushes button .g { font-size: 22px; line-height: 1; }
+.sc-brushes button .t { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.sc-brushes button.sel {
+  background: rgba(159, 216, 255, 0.32); border-color: #9fd8ff; color: #fff;
+  box-shadow: 0 0 14px rgba(159, 216, 255, 0.45);
+}
+.sc-hint {
+  text-align: center; font-size: 11px; color: rgba(207, 238, 255, 0.6);
+  padding: 4px 12px 0; text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+}
+
+/* LIMBOVERSE: verse history (settings panel) */
+.verse-save-row { margin: 6px 0; }
+.verse-save-row button {
+  background: rgba(159, 216, 255, 0.12); border: 1px solid rgba(159, 216, 255, 0.35);
+  color: #cfeeff; font-family: inherit; font-size: 12px; padding: 6px 12px;
+  border-radius: 8px; cursor: pointer;
+}
+.verse-save-row button:active { background: rgba(159, 216, 255, 0.25); }
+#verse-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.verse-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: rgba(6, 10, 24, 0.6); border: 1px solid rgba(159, 216, 255, 0.15);
+  border-radius: 8px; padding: 6px 8px;
+}
+.verse-label { font-size: 11px; color: rgba(207, 238, 255, 0.85); flex: 1; }
+.verse-restore {
+  background: rgba(159, 216, 255, 0.12); border: 1px solid rgba(159, 216, 255, 0.35);
+  color: #cfeeff; font-family: inherit; font-size: 11px; padding: 4px 10px;
+  border-radius: 6px; cursor: pointer; flex: 0 0 auto;
+}
+.verse-restore:active { background: rgba(159, 216, 255, 0.25); }

@@ -9,11 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=81';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=81';
-import { CouchNet } from './couch.js?v=81';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=81';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=81';
+import { AudioEngine } from './audio.js?v=82';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=82';
+import { CouchNet } from './couch.js?v=82';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=82';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=82';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=82';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -9539,6 +9540,136 @@ function handleFohReq(peerId, d) {
     try { net.sendFohSync({ foh: { ...foh } }); } catch (e) {}
   }
 }
+
+/* ============================================================
+   VERSE SNAPSHOTS — the verse versions itself.
+   Auto-saves the shared creative state every 5 min (when changed).
+   Any drifter can roll back to a version; the restore re-broadcasts
+   to the room, healing griefed or destroyed state.
+   UI lives in the settings panel under VERSE HISTORY.
+   ============================================================ */
+function verseGatherState() {
+  let wallImg = null;
+  try { wallImg = wallSnapshot(); } catch (e) {}
+  let models = {};
+  try { models = wsLoadModels(); } catch (e) {}
+  return {
+    by: (typeof myName === 'string' && myName) || 'drifter',
+    wallStrokes: (wall.log || []).map(s => ({ id: s.id })), // fingerprint only
+    wallImg,                                                // the actual mural
+    foh: { ...foh },
+    models,
+  };
+}
+
+function verseTick() {
+  try {
+    const snap = verseCapture(verseGatherState());
+    if (snap) verseRenderUI();
+  } catch (e) {}
+}
+
+async function verseRestoreByTs(ts) {
+  const snaps = verseLoad();
+  const snap = snaps.find(s => s.ts === ts);
+  if (!snap) return;
+  // 1. Wall: the snapshot mural becomes the base, then tell the room.
+  try {
+    if (snap.wallImg) {
+      await wallApplySnapshot(snap.wallImg, 'replace');
+      wallSaveSnapshot(); // persist the restored mural locally too
+      if (net.enabled && net.sendWallSync && active && active.key === SOUND_ROOM_KEY) {
+        const img = wallSnapshot();
+        if (img) net.sendWallSync({ reqId: 'verse-' + Date.now().toString(36), img });
+      }
+    }
+  } catch (e) {}
+  // 2. FOH: apply the snapshot lighting, then tell the room.
+  try {
+    if (snap.foh && typeof snap.foh === 'object') {
+      for (const k of Object.keys(FOH_DEFAULTS)) {
+        if (snap.foh[k] !== undefined) foh[k] = snap.foh[k];
+      }
+      foh.touched = true;
+      fohSyncUI();
+      try { soundFohApplyLive(); } catch (e) {}
+      fohPersist();
+      if (net.enabled && net.sendFohSync && active && active.key === SOUND_ROOM_KEY) {
+        net.sendFohSync({ foh: { ...foh } });
+      }
+    }
+  } catch (e) {}
+  // 3. My models: put them back on my shelf and re-share each one.
+  try {
+    if (snap.models && typeof snap.models === 'object') {
+      const cur = wsLoadModels();
+      let changed = false;
+      for (const name of Object.keys(snap.models)) {
+        if (!cur[name]) { cur[name] = snap.models[name]; changed = true; }
+      }
+      if (changed) {
+        wsSaveModels(cur);
+        try { wsRenderShelf(); } catch (e) {}
+        for (const name of Object.keys(snap.models)) {
+          try { wsBroadcastModel(name); } catch (e) {}
+        }
+      }
+    }
+  } catch (e) {}
+  try { addSystemLine('verse restored to ' + verseAge(snap.ts) + ' — the room has been told'); } catch (e) {}
+  verseRenderUI();
+}
+
+function verseRenderUI() {
+  const el = document.getElementById('verse-list');
+  if (!el) return;
+  const snaps = verseLoad();
+  if (!snaps.length) {
+    el.innerHTML = '<div class="set-tiny">no versions yet — the verse saves itself every 5 minutes</div>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const s of snaps) {
+    const row = document.createElement('div');
+    row.className = 'verse-row';
+    const label = document.createElement('span');
+    label.className = 'verse-label';
+    label.textContent = verseAge(s.ts) + ' · ' + s.by + ' · ' + verseSummary(s);
+    const btn = document.createElement('button');
+    btn.textContent = 'restore';
+    btn.className = 'verse-restore';
+    btn.addEventListener('click', () => {
+      if (confirm('Roll the verse back to this version? The room will see it.')) {
+        verseRestoreByTs(s.ts);
+      }
+    });
+    row.appendChild(label);
+    row.appendChild(btn);
+    el.appendChild(row);
+  }
+}
+
+function verseSaveNow() {
+  try {
+    // Force a snapshot even if the fingerprint matches (manual save).
+    const snaps = verseLoad();
+    const st = verseGatherState();
+    const snap = {
+      v: 1, ts: Date.now(),
+      by: String(st.by).slice(0, 16),
+      fp: Date.now(), // unique: manual saves always land
+      wallStrokes: st.wallStrokes,
+      wallImg: st.wallImg,
+      foh: st.foh,
+      models: st.models,
+    };
+    snaps.unshift(snap);
+    try { localStorage.setItem('limboverse-snaps-v1', JSON.stringify(snaps.slice(0, 12))); } catch (e) {}
+    verseRenderUI();
+    try { addSystemLine('verse version saved'); } catch (e) {}
+  } catch (e) {}
+}
+
 /* FOH wins over the community-wall tint and the idle light code, but only
    once the drifter has touched the board. */
 function soundFohApply(anim, t) {
@@ -11027,6 +11158,8 @@ function finishBoot() {
     worlds[THEATRE_DEF.key] = buildTheatre();
     try { stageLoad(); stageRebuild(); } catch (e) { /* stage starts empty */ }
     try { fohRestore(); } catch (e) { /* FOH starts at defaults */ }
+    // limboverse: the verse versions itself — auto-snapshot every 5 min
+    try { setInterval(verseTick, VERSE_INTERVAL_MS); } catch (e) {}
   } catch (err) {
     // Last resort: say so on screen instead of a dead "loading…" hang.
     loadingEl.firstElementChild.textContent = 'limbo failed to wake — reload to try again';
@@ -12051,6 +12184,7 @@ function setSettings(open) {
     renderWispSection();
     renderFriendsSection();
     updateDebugHud();
+    try { verseRenderUI(); } catch (e) {} // limboverse: refresh version list
   }
 }
 function setMuted(muted) {
@@ -12064,6 +12198,12 @@ gearBtn.addEventListener('click', (e) => {
   gearBtn.blur();
 });
 settingsClose.addEventListener('click', () => setSettings(false));
+// limboverse: manual verse snapshot
+try {
+  document.getElementById('verse-save-btn').addEventListener('click', () => {
+    verseSaveNow();
+  });
+} catch (e) {}
 soundToggle.addEventListener('click', () => {
   setMuted(audio.toggleMute());
   soundToggle.blur();
