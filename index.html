@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- build 67: never serve a stale page — revalidate the document on every
+     load; all assets carry ?v= cache-busts so a fresh document is always
+     a fully fresh build. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='%23a8c8ff'/%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23a8c8ff' stroke-opacity='0.4'/%3E%3C/svg%3E">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>LIMBO — a portal universe</title>
+<meta name="theme-color" content="#020204">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css?v=81">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
+     Local files, not a CDN — the couch co-op ceremony must work offline. -->
+<script src="js/vendor/qrcode.js?v=81"></script>
+<script src="js/vendor/jsqr.js?v=81"></script>
+<!-- build 34: offline-first PWA — after one online visit the whole game
+     (including three.js) is cached and boots with zero bars. -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<!-- full-screen fade used for portal transitions -->
+<div id="fade"></div>
+
+<!-- realm name title card shown after each transition -->
+<div id="title-card"></div>
+
+<!-- shown once per realm when all 5 echoes are collected -->
+<div id="attuned">REALM ATTUNED</div>
+
+<!-- celebration toast when attuning unlocks a skin or hat -->
+<div id="unlock-toast"></div>
+
+<!-- persistent HUD -->
+<div id="hud">
+  <div id="realm-name">THE NEXUS</div>
+  <div id="echo-counter">ECHOES 0 / 20</div>
+  <div id="peer-count">DRIFTERS HERE: 1</div>
+  <div id="controls-hint">WASD / ARROWS — FLY&nbsp;&nbsp;·&nbsp;&nbsp;DRAG — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;SPACE / SHIFT — RISE / SINK&nbsp;&nbsp;·&nbsp;&nbsp;T — CHAT&nbsp;&nbsp;·&nbsp;&nbsp;M — MUTE</div>
+  <div id="mute-label">SOUND ON</div>
+</div>
+
+<!-- jam room — only visible inside the sound room -->
+<button id="jam-btn" style="display:none">&#127925; jam</button>
+
+<!-- community wall paint mode — only visible inside the sound room (build 18) -->
+<button id="paint-btn" style="display:none">&#127912; paint</button>
+
+<!-- jukebox — synced queue playback, only visible inside the sound room (build 21) -->
+<button id="juke-btn" style="display:none">&#127925; jukebox</button>
+<div id="juke-panel" style="display:none">
+  <div class="juke-head"><span>&#127925; JUKEBOX</span><span style="display:flex;align-items:center;gap:2px"><span id="juke-holder" class="juke-holder"></span><button id="juke-clear" aria-label="clear the queue">clear</button><button id="juke-close" aria-label="close">&#10005;</button></span></div>
+  <div class="juke-now">
+    <div id="juke-now-title" class="juke-now-title">nothing playing</div>
+    <div class="juke-now-sub"><span id="juke-now-provider"></span><span id="juke-now-by"></span></div>
+    <div class="juke-progress"><div id="juke-progress-fill"></div></div>
+    <div class="juke-now-row">
+      <button id="juke-skip">skip</button>
+      <button id="juke-open-app">open in my app &#8599;</button>
+      <button id="juke-join" style="display:none">tap to join the music</button>
+    </div>
+    <div id="juke-countdown" class="juke-countdown" style="display:none"></div>
+    <div class="juke-vol-row"><span>vol</span><input id="juke-vol" type="range" min="0" max="100" value="70" aria-label="jukebox volume"></div>
+  </div>
+  <div class="juke-sub">UP NEXT</div>
+  <div id="juke-queue" class="juke-queue"><div class="juke-empty">queue is empty — drop a link</div></div>
+  <div class="juke-add-row">
+    <input id="juke-add-url" placeholder="paste a youtube / soundcloud / mp3 link…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="juke-add-btn">queue it</button>
+  </div>
+  <!-- build 27: play a song straight from the phone. The file travels to
+       the room over the P2P data channel (no upload site, no link that can
+       die) and everyone hears it in sync like any other jukebox track. -->
+  <div class="juke-add-row">
+    <button id="juke-phone-btn">&#128241; play from my phone</button>
+    <input type="file" id="juke-phone-input" accept="audio/*" style="display:none">
+  </div>
+  <div id="juke-phone-status" class="juke-phone-status" style="display:none"></div>
+  <div id="juke-hint" class="juke-hint">everyone hears the same track at the same time — on their own device</div>
+  <!-- build 73: link diagnostic — sent / received / relay / peers, read it off the phones -->
+  <div id="juke-diag" class="juke-diag">link: —</div>
+</div>
+<!-- jukebox provider players: persistent + permanently invisible (build 25).
+     They live at body level so closing the panel never tears them down. -->
+<div id="juke-yt-holder" class="juke-embed"></div>
+<!-- theatre (build 76): synced video watching. The YouTube player lives in
+     #theatre-screen3d, a DOM layer projected onto the 3D cinema screen every
+     frame — the video plays IN the room, on the wall, not in a 2D panel.
+     The panel is just a slim control strip; audio continues in every room. -->
+<!-- build 80: the YT IFrame API REPLACES its target element with the <iframe>
+     (that's documented behavior) — so the projection layer must be a WRAPPER
+     the API never touches. theatreScreenTick() transforms #theatre-screen3d;
+     the player itself is constructed on #theatre-screen3d-slot inside it. -->
+<div id="theatre-screen3d" style="display:none"><div id="theatre-screen3d-slot"></div></div>
+<div id="theatre-panel" style="display:none">
+  <div class="theatre-head"><span>&#127916; THEATRE</span><span id="theatre-by" class="theatre-by"></span><button id="theatre-close" aria-label="close">&#10005;</button></div>
+  <div id="theatre-screen-note" class="theatre-screen-note">look up — the video plays on the big screen</div>
+  <div class="theatre-controls">
+    <button id="theatre-playpause" aria-label="play or pause">&#9654;</button>
+    <button class="theatre-mutebtn mini-mutebtn" aria-label="mute the video room" title="mute the video room">&#128250;</button>
+    <button class="jam-mutebtn mini-mutebtn" aria-label="mute the sound room" title="mute the sound room">&#127925;</button>
+    <input id="theatre-url" placeholder="paste a youtube link…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="theatre-queue-btn">watch</button>
+  </div>
+  <div id="theatre-link" class="theatre-link"></div>
+</div>
+<div id="juke-sc-holder" class="juke-embed"></div>
+<div id="paint-overlay" style="display:none">
+  <div class="paint-head">
+    <span>&#127912; COMMUNITY WALL</span>
+    <div class="paint-head-btns">
+      <button id="paint-save" aria-label="save wall as PNG">💾 save</button>
+      <button id="paint-done">done</button>
+    </div>
+  </div>
+  <div id="paint-wrap"><canvas id="paint-canvas"></canvas></div>
+  <div id="paint-palette" aria-label="colors"></div>
+  <div class="paint-tools">
+    <button id="paint-eraser" aria-label="eraser">&#9003; erase</button>
+    <button id="paint-blend" aria-label="blend brush">&#127744; blend</button>
+    <button id="paint-undo" aria-label="undo last stroke">&#8617; undo</button>
+    <div id="paint-sizes" aria-label="brush size">
+      <button data-size="6">S</button>
+      <button data-size="16" class="sel">M</button>
+      <button data-size="34">L</button>
+    </div>
+  </div>
+  <div class="paint-hint">it paints live for everyone in the sound room</div>
+</div>
+<!-- build 36: journey zone banner — the land you're flying through. -->
+<div id="zone-name" aria-hidden="true"></div>
+<!-- build 33: journey room — like the jukebox track + follow Holowatts.
+     Only visible while a jukebox track is playing in the endless journey. -->
+<div id="juke-social-pill" style="display:none">
+  <button id="juke-like-btn" aria-label="like this track">&#9825; <span id="juke-like-count">0</span></button>
+  <button id="juke-follow-btn">follow</button>
+  <div id="juke-follow-menu" style="display:none">
+    <a href="https://soundcloud.com/joshua-watts-4" target="_blank" rel="noopener">&#9729; SoundCloud</a>
+    <a href="https://www.instagram.com/holowatts_music" target="_blank" rel="noopener">&#128247; Instagram</a>
+  </div>
+</div>
+<!-- build 41: endless journey chrome — return-to-nexus, jam mute, minimap.
+     Shown only while flying the journey (renderJourneyChrome). -->
+<div id="journey-chrome" style="display:none">
+  <button id="journey-home-btn" aria-label="return to the nexus">&#8962; nexus</button>
+  <button id="journey-jammute" aria-label="mute the jam in the journey" aria-pressed="false">&#127925; jam on</button>
+  <canvas id="journey-minimap" width="132" height="132" aria-label="journey minimap"></canvas>
+  <!-- build 49: manta-ray tap feedback -->
+  <div id="journey-toast" aria-hidden="true"></div>
+</div>
+<!-- build 30: iOS Safari can lock audio until a user gesture. This one
+     floating pill covers both audio paths (WebAudio jam + jukebox media
+     element): the tap is a real gesture, so the context resumes and the
+     current track starts at the room's wall-clock offset. -->
+<button id="sound-pill" style="display:none">&#128263; tap for sound</button>
+<div id="jam-panel">
+  <div class="jam-head"><span>&#127925; JAM ROOM</span><span class="jam-head-btns"><button class="jam-mutebtn mini-mutebtn" aria-label="mute the sound room" title="mute the sound room">&#127925;</button><button id="jam-close" aria-label="close">&#10005;</button></span></div>
+  <!-- build 75: theatre monitor — hear the theatre's video while jamming -->
+  <div id="jam-theatre" class="jam-theatre" style="display:none">
+    <span>&#127916; theatre</span><button class="theatre-mutebtn mini-mutebtn" aria-label="mute the video room" title="mute the video room">&#128250;</button><input id="jam-theatre-vol" type="range" min="0" max="100" value="70" aria-label="theatre volume">
+  </div>
+  <!-- build 66: the loop, simplified. One big unmissable button at the top
+       of the jam UI: tap = record, tap = close + loop, tap = stop,
+       hold = clear. -->
+  <div class="jam-loop-top">
+    <button id="jam-loop-btn" class="jam-loop-btn" aria-label="loop: tap to record">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <circle class="loop-ring-bg" cx="32" cy="32" r="27"></circle>
+        <circle class="loop-ring" id="jam-loop-ring" cx="32" cy="32" r="27"></circle>
+      </svg>
+      <span class="loop-glyph" id="jam-loop-glyph">&#9679;</span>
+    </button>
+    <div class="jam-loop-top-info">
+      <div class="jam-loop-top-title">LOOP</div>
+      <div id="jam-loop-state" class="jam-loop-state">tap &#9679; to record a loop</div>
+      <div id="jam-loop-meta" class="jam-loop-meta">hold the button to clear</div>
+    </div>
+  </div>
+  <div class="jam-transport">
+    <div class="jam-bpm-wrap"><div id="jam-bpm">120</div><div class="jam-bpm-label">BPM</div></div>
+    <div class="jam-chord-wrap"><div id="jam-chord-disp">&ndash;</div><div class="jam-bpm-label" id="jam-chord-who">CHORD</div></div>
+    <div class="jam-clock"><span id="jam-clock-dot"></span><span id="jam-clock-status">clock stopped</span></div>
+    <button id="jam-tap">tap</button>
+    <button id="jam-listen" aria-label="listen to the jukebox for tempo">listen</button>
+    <button id="jam-bpm-down" aria-label="slower">−</button>
+    <button id="jam-bpm-up" aria-label="faster">+</button>
+  </div>
+  <div class="jam-groove-row">
+    <div id="jam-beat-dots" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <button id="jam-metro-toggle" aria-label="toggle metronome">metro</button>
+    <input id="jam-metro-vol" type="range" min="0" max="100" value="50" aria-label="metronome volume">
+  </div>
+  <div class="jam-sub">INSTRUMENT</div>
+  <div class="jam-inst-tabs" id="jam-inst-tabs">
+    <button class="jam-inst-tab sel" data-inst="lead">lead</button>
+    <button class="jam-inst-tab" data-inst="bass">bass</button>
+    <button class="jam-inst-tab" data-inst="drums">drums</button>
+    <button class="jam-inst-tab" data-inst="pad">pad</button>
+  </div>
+  <div id="jam-inst-lead" class="jam-inst-panel">
+    <div class="jam-synth-row">
+      <span class="jam-preset-label">osc 1</span>
+      <button class="jam-wave sel" data-osc="1" data-wave="sawtooth">saw</button>
+      <button class="jam-wave" data-osc="1" data-wave="square">square</button>
+      <button class="jam-wave" data-osc="1" data-wave="triangle">tri</button>
+    </div>
+    <div class="jam-synth-row">
+      <span class="jam-preset-label">osc 2</span>
+      <button class="jam-wave sel" data-osc="2" data-wave="sawtooth">saw</button>
+      <button class="jam-wave" data-osc="2" data-wave="square">square</button>
+      <button class="jam-wave" data-osc="2" data-wave="triangle">tri</button>
+    </div>
+    <div class="jam-synth-row jam-presets">
+      <span class="jam-preset-label">patch</span>
+      <button class="jam-preset" data-preset="spark">spark</button>
+      <button class="jam-preset" data-preset="acid">acid</button>
+      <button class="jam-preset" data-preset="drift">drift</button>
+      <button class="jam-preset" data-preset="pluck">pluck</button>
+      <button class="jam-preset" data-preset="pad">pad</button>
+    </div>
+    <div class="jam-sub jam-knob-sub">FILTER</div>
+    <div class="jam-knobs cols3">
+      <label>cutoff <input id="jam-cutoff" type="range" min="300" max="8000" value="1800"></label>
+      <label>reso <input id="jam-reso" type="range" min="0" max="12" step="0.5" value="5"></label>
+      <label>env <input id="jam-env" type="range" min="0" max="100" value="35"></label>
+    </div>
+    <div class="jam-sub jam-knob-sub">ENVELOPE</div>
+    <div class="jam-knobs cols3">
+      <label>attack <input id="jam-attack" type="range" min="2" max="1000" value="8"></label>
+      <label>decay <input id="jam-decay" type="range" min="8" max="250" value="40"></label>
+      <label>sustain <input id="jam-sustain" type="range" min="0" max="100" value="70"></label>
+      <label>release <input id="jam-release" type="range" min="5" max="200" value="30"></label>
+    </div>
+    <div class="jam-sub jam-knob-sub">LFO</div>
+    <div class="jam-knobs cols3">
+      <label>rate <input id="jam-lforate" type="range" min="1" max="200" value="50"></label>
+      <label>pitch <input id="jam-lfopitch" type="range" min="0" max="100" value="0"></label>
+      <label>filter <input id="jam-lfofilter" type="range" min="0" max="100" value="0"></label>
+    </div>
+    <div class="jam-sub jam-knob-sub">OSC / FX</div>
+    <div class="jam-knobs cols3">
+      <label>osc 2 mix <input id="jam-osc2mix" type="range" min="0" max="100" value="45"></label>
+      <label>detune <input id="jam-spread" type="range" min="0" max="50" value="12"></label>
+      <label>sub <input id="jam-sub" type="range" min="0" max="100" value="0"></label>
+      <label>echo <input id="jam-echo" type="range" min="0" max="100" value="30"></label>
+      <label>glide <input id="jam-glide" type="range" min="0" max="30" value="2"></label>
+    </div>
+    <div class="jam-sub jam-knob-sub">PEDALBOARD</div>
+    <div class="jam-knobs cols3">
+      <label>drive <input id="jam-drive" type="range" min="0" max="100" value="0"></label>
+      <label>delay mix <input id="jam-dlymix" type="range" min="0" max="100" value="25"></label>
+      <label>delay fb <input id="jam-dlyfb" type="range" min="0" max="92" value="35"></label>
+    </div>
+    <div class="jam-synth-row jam-dlydiv-row">
+      <span class="jam-preset-label">delay</span>
+      <button class="jam-dlydiv" data-div="0.5">1/8</button>
+      <button class="jam-dlydiv sel" data-div="0.75">1/8.</button>
+      <button class="jam-dlydiv" data-div="1">1/4</button>
+    </div>
+    <div class="jam-fx-note">clipper &rarr; delay &rarr; limiter, always on the synth</div>
+    <div class="jam-synth-row jam-scales">
+      <span class="jam-preset-label">keys</span>
+      <button class="jam-scale sel" data-scale="chromatic">chromatic</button>
+      <button class="jam-scale" data-scale="minpent">min pent</button>
+      <button class="jam-scale" data-scale="majpent">maj pent</button>
+    </div>
+    <div id="jam-keys"></div>
+    <!-- build 39: one-touch triads stacked from the scale lock, voiced
+         through your patch. Labels are root note names. -->
+    <div class="jam-sub jam-chords-sub">CHORDS</div>
+    <div id="jam-lead-chords" class="jam-lead-chords"></div>
+  </div>
+  <div id="jam-inst-bass" class="jam-inst-panel" hidden>
+    <div id="jam-bass-keys"></div>
+  </div>
+  <div id="jam-inst-drums" class="jam-inst-panel" hidden>
+    <div id="jam-drums"></div>
+  </div>
+  <!-- build 63: press-and-hold a drum pad to swap its sample -->
+  <div id="drum-picker" class="drum-picker" hidden>
+    <div class="drum-picker-backdrop"></div>
+    <div class="drum-picker-sheet">
+      <div id="drum-picker-title" class="drum-picker-title"></div>
+      <div id="drum-picker-list" class="drum-picker-list"></div>
+      <div class="drum-picker-hint">tap to hear + load &nbsp;·&nbsp; hold the pad for the list</div>
+    </div>
+  </div>
+  <div id="jam-inst-pad" class="jam-inst-panel" hidden>
+    <div id="jam-chords"></div>
+  </div>
+  <div class="jam-sub">SAMPLER</div>
+  <div class="jam-sampler-row">
+    <button id="jam-grab">grab loop</button>
+    <button id="jam-grab-room" title="record the room mix (jukebox + jam + mic)">&#127908; sample the room</button>
+    <div id="jam-pads"></div>
+  </div>
+  <!-- build 66: retired the old loop pedal-flow section — the one big
+       button lives at the top of the jam UI now. -->
+  <!-- build 39: optional rhythm sequencer. OFF by default — the room's
+       generative drift is untouched until you tap "beats". 16 steps x
+       4 synthesized voices (no samples); runs on the jam tempo; the
+       overdub looper catches it like anything else you play. -->
+  <div class="jam-sub">RHYTHM</div>
+  <div class="jam-seq-head">
+    <button id="jam-seq-toggle">beats</button>
+    <span id="jam-seq-state" class="jam-seq-state">the flock drifts free</span>
+  </div>
+  <div id="jam-seq-body" hidden>
+    <div id="jam-seq-grid"></div>
+    <div class="jam-seq-presets">
+      <button class="jam-seq-preset" data-seqpreset="pulse">pulse</button>
+      <button class="jam-seq-preset" data-seqpreset="sway">sway</button>
+      <button class="jam-seq-preset" data-seqpreset="embers">embers</button>
+      <button id="jam-seq-clear">clear</button>
+      <label class="jam-seq-swing">sway <input id="jam-seq-swing" type="range" min="0" max="60" value="0"></label>
+    </div>
+  </div>
+  <!-- build 40: per-source mixer. lead = your synth, drums = sequencer +
+       drum keys, juke = jukebox, loop = overdub looper, voice = room voices.
+       Levels persist. -->
+  <div class="jam-sub">MIX</div>
+  <div class="jam-mix-row" id="jam-mix-row">
+    <label>lead <input id="mix-lead" type="range" min="0" max="100" value="90" aria-label="lead synth volume"></label>
+    <label>drums <input id="mix-drums" type="range" min="0" max="100" value="85" aria-label="drums volume"></label>
+    <label>juke <input id="mix-juke" type="range" min="0" max="100" value="70" aria-label="jukebox volume"></label>
+    <label>loop <input id="mix-loop" type="range" min="0" max="100" value="100" aria-label="looper volume"></label>
+    <label>voice <input id="mix-voice" type="range" min="0" max="100" value="90" aria-label="room voices volume"></label>
+  </div>
+  <!-- build 27: mic in. build 40: voice is live-only by default (dry monitor,
+       never the looper); "talk" streams your voice to the room over the
+       relay; "voice → loop" explicitly lets it drift into the loop.
+       Headphones on, or the room hears itself. -->
+  <div class="jam-sub">MIC</div>
+  <div class="jam-mic-row">
+    <button id="jam-mic-btn">&#127908; mic</button>
+    <button id="jam-talk-btn" style="display:none">&#127908; talk</button>
+    <button id="jam-mic-mute" style="display:none">mute</button>
+    <button id="jam-mic-loop" style="display:none" aria-pressed="false" title="let your voice drift into the loop">voice &#8594; loop</button>
+    <div id="jam-mic-meter" class="jam-mic-meter" style="display:none" aria-hidden="true"><div id="jam-mic-meter-fill"></div></div>
+  </div>
+  <div id="jam-mic-note" class="jam-mic-note" style="display:none">headphones on — your speakers feed the mic back into the room</div>
+  <div id="jam-room-note" class="jam-room-note" hidden></div>
+  <!-- build 66: STAGE. Saved models come only from the Model Room — no
+       modeling here. Tap a model to drop it on the stage, tap a placed
+       piece to move / spin / size / remove it. The layout persists and
+       rides to everyone in the room. -->
+  <div class="jam-sub" id="jam-stage-sub">STAGE</div>
+  <div id="jam-stage" class="jam-stage">
+    <div class="jam-stage-hint">pieces come from the model room — tap one to place it</div>
+    <div id="jam-stage-models" class="jam-stage-models"></div>
+    <div class="jam-stage-hint">on the stage — tap a piece to tweak it</div>
+    <div id="jam-stage-placed" class="jam-stage-placed"></div>
+    <div id="jam-stage-edit" class="jam-stage-edit" hidden>
+      <div class="jam-stage-edit-name" id="jam-stage-edit-name"></div>
+      <div class="jam-stage-sliders">
+        <label>x <input id="jam-stage-x" type="range" min="-30" max="30" step="0.5" value="0"></label>
+        <label>z <input id="jam-stage-z" type="range" min="-30" max="30" step="0.5" value="0"></label>
+        <label>lift <input id="jam-stage-y" type="range" min="0" max="12" step="0.25" value="0"></label>
+        <label>spin <input id="jam-stage-rot" type="range" min="0" max="360" step="5" value="0"></label>
+        <label>size <input id="jam-stage-size" type="range" min="20" max="400" step="5" value="100"></label>
+      </div>
+      <button id="jam-stage-delete">remove this piece</button>
+    </div>
+    <button id="jam-stage-clear" class="jam-stage-clear">clear the stage</button>
+  </div>
+  <!-- build 66: FOH — front of house. Lighting + room FX for the sound
+       room, live. Rides to everyone in the room like the stage does. -->
+  <div class="jam-sub" id="jam-foh-sub">FRONT OF HOUSE</div>
+  <div id="jam-foh" class="jam-foh">
+    <div class="jam-foh-grid">
+      <label class="jam-foh-color">room <input id="foh-amb-color" type="color" value="#8899bb"></label>
+      <label>room glow <input id="foh-amb-int" type="range" min="0" max="200" value="50"></label>
+      <label class="jam-foh-color">spot 1 <input id="foh-spot1" type="color" value="#ffc24d"></label>
+      <label class="jam-foh-color">spot 2 <input id="foh-spot2" type="color" value="#7ae0ff"></label>
+      <label>spot glow <input id="foh-spot-int" type="range" min="0" max="300" value="120"></label>
+      <label class="jam-foh-color">haze <input id="foh-fog-color" type="color" value="#0a0610"></label>
+      <label>haze thick <input id="foh-fog-density" type="range" min="0" max="100" value="35"></label>
+      <label>booth glow <input id="foh-glow" type="range" min="0" max="200" value="50"></label>
+      <label class="jam-foh-check"><input id="foh-strobe" type="checkbox"> strobe</label>
+      <label>strobe rate <input id="foh-strobe-rate" type="range" min="1" max="20" value="8"></label>
+    </div>
+    <button id="foh-reset" class="jam-foh-reset">reset the lights</button>
+  </div>
+  <div id="jam-hint" class="jam-hint"></div>
+  <div class="jam-sub">IN THE ROOM</div>
+  <div id="jam-jammers" class="jam-jammers">the room is quiet — play something &#127925;</div>
+</div>
+
+<!-- build 66: the model room workbench — an in-browser mini modeler.
+     Primitives in, transforms via sliders, save named models to
+     localStorage. Opens in the Model Room realm. -->
+<button id="workshop-btn" aria-label="open the workbench" style="display:none">&#128736; workbench</button>
+<div id="workshop-panel" style="display:none">
+  <div class="ws-head"><span>&#128736; WORKBENCH</span><button id="workshop-close" aria-label="close">&#10005;</button></div>
+  <div class="ws-sub">ADD A PIECE</div>
+  <div class="ws-add" id="ws-add">
+    <button data-prim="box">box</button>
+    <button data-prim="sphere">sphere</button>
+    <button data-prim="cylinder">cylinder</button>
+    <button data-prim="cone">cone</button>
+    <button data-prim="torus">torus</button>
+    <button data-prim="plane">plane</button>
+  </div>
+  <div class="ws-sub">PIECES — tap to pick one up</div>
+  <div id="ws-pieces" class="ws-pieces"><div class="ws-empty">nothing built yet — add a piece above</div></div>
+  <div id="ws-edit" class="ws-edit" hidden>
+    <div class="ws-edit-name" id="ws-edit-name"></div>
+    <div class="ws-sliders">
+      <label>x <input id="ws-x" type="range" min="-14" max="14" step="0.25" value="0"></label>
+      <label>y <input id="ws-y" type="range" min="0" max="10" step="0.25" value="1"></label>
+      <label>z <input id="ws-z" type="range" min="-14" max="14" step="0.25" value="0"></label>
+      <label>spin <input id="ws-rot" type="range" min="0" max="360" step="5" value="0"></label>
+      <label>size <input id="ws-size" type="range" min="10" max="400" step="5" value="100"></label>
+      <label class="ws-color">color <input id="ws-color" type="color" value="#7ae0ff"></label>
+    </div>
+    <div class="ws-edit-row">
+      <button id="ws-sculpt">&#10022; sculpt</button>
+      <button id="ws-undo">&#8617; undo</button>
+      <button id="ws-delete">delete piece</button>
+    </div>
+  </div>
+  <div class="ws-sub">SAVE THIS MODEL</div>
+  <div class="ws-save-row">
+    <input id="ws-name" maxlength="24" placeholder="name it…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="ws-save">save</button>
+  </div>
+  <div class="ws-sub">SAVED MODELS</div>
+  <div id="ws-models" class="ws-models"></div>
+  <!-- build 69: the room shelf — models shared by everyone in the model room.
+       Tapping one loads a copy into your own workbench. -->
+  <div class="ws-sub">ROOM SHELF <span id="ws-roster" class="ws-roster"></span></div>
+  <div id="ws-shelf" class="ws-models"></div>
+</div>
+
+<!-- build 68: sculpt mode — Nomad-style touch sculpting on the selected piece.
+     Canvas-first: floating brush toolbar, minimal chrome. -->
+<div id="sculpt-hud" style="display:none">
+  <div class="sc-top">
+    <span id="sc-name">sculpt</span>
+    <div class="sc-detail" id="sc-detail" role="group" aria-label="detail level">
+      <button data-detail="low">low</button>
+      <button data-detail="med" class="sel">med</button>
+      <button data-detail="high">high</button>
+    </div>
+    <button id="sc-sym" class="on" aria-label="mirror symmetry">&#8646;</button>
+    <button id="sc-invert" aria-label="invert brush">&#8645;</button>
+    <button id="sc-undo" class="off" aria-label="undo stroke">&#8617; undo</button>
+    <button id="sc-done">&#10003; done</button>
+  </div>
+  <div class="sc-bottom">
+    <div class="sc-sliders">
+      <label>size <input id="sc-size" type="range" min="8" max="200" step="1" value="55"></label>
+      <label>push <input id="sc-int" type="range" min="5" max="100" step="1" value="50"></label>
+    </div>
+    <div class="sc-brushes" id="sc-brushes">
+      <button data-brush="grab"><span class="g">&#9995;</span><span class="t">grab</span></button>
+      <button data-brush="clay" class="sel"><span class="g">&#9679;</span><span class="t">clay</span></button>
+      <button data-brush="smooth"><span class="g">~</span><span class="t">smooth</span></button>
+      <button data-brush="flatten"><span class="g">&#9646;</span><span class="t">flat</span></button>
+      <button data-brush="pinch"><span class="g">&#8601;</span><span class="t">pinch</span></button>
+      <button data-brush="inflate"><span class="g">&#9678;</span><span class="t">inflate</span></button>
+    </div>
+    <div class="sc-hint">drag the clay to push it &middot; drag the background to orbit &middot; pinch to zoom</div>
+  </div>
+</div>
+
+<!-- settings (gear) — wisp skins/hats, sound, drifter name, debug readout -->
+<button id="gear-btn" aria-label="settings">&#9881;</button>
+<div id="settings-panel">
+  <div class="set-head"><span>SETTINGS</span><button id="settings-close" aria-label="close">&#10005;</button></div>
+  <div class="set-row"><span class="set-label">SOUND</span><button id="sound-toggle">ON</button></div>
+  <div class="set-row"><span class="set-label">DRIFTER NAME</span><input id="settings-name" maxlength="16" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+  <div class="set-debug-head">WISP</div>
+  <div class="set-sub">SKIN</div>
+  <div id="wisp-skins" class="wisp-row"></div>
+  <div class="set-sub">HAT</div>
+  <div id="wisp-hats" class="wisp-row"></div>
+  <div class="set-sub">TRAIL</div>
+  <div id="wisp-trail-styles" class="wisp-row"></div>
+  <div class="set-sub">TRAIL COLOR</div>
+  <div id="wisp-trail-colors" class="wisp-row"></div>
+  <div class="set-debug-head">PRINTS</div>
+  <div class="set-tiny">the realm artworks, as giclée prints</div>
+  <div id="prints-list"></div>
+  <div class="set-debug-head">FRIENDS <span id="friends-live"></span></div>
+  <div class="set-tiny">add drifters by name — see who's live, hop to their realm</div>
+  <div class="friend-add-row">
+    <input id="friend-add-input" maxlength="16" placeholder="drifter name…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="friend-add-btn">add</button>
+  </div>
+  <div id="friends-list"></div>
+  <!-- build 34: couch co-op (offline LAN multiplayer) lives next to the
+       friends list — the other multiplayer UI. -->
+  <div class="set-debug-head">COUCH CO-OP <span class="set-tiny">offline</span></div>
+  <div class="set-tiny">thanksgiving mode — no internet, just one android hotspot</div>
+  <div id="couch-set-row" class="couch-set-row">
+    <button id="set-couch-host">&#128225; host</button>
+    <button id="set-couch-join">&#128247; join</button>
+  </div>
+  <div id="couch-set-status" class="set-tiny" style="display:none"></div>
+  <div class="set-debug-head">NET DEBUG</div>
+  <div id="settings-debug"></div>
+</div>
+
+<!-- room-local text chat with whoever is drifting here -->
+<div id="chat">
+  <button id="chat-toggle" aria-label="toggle chat history">&#128172;</button>
+  <div id="chat-log"></div>
+  <div id="chat-row">
+    <input id="chat-input" maxlength="140" enterkeyhint="send" placeholder="say something to the drifters here…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="chat-send" aria-label="send">&#10148;</button>
+  </div>
+</div>
+
+<!-- build 34: couch co-op (offline LAN multiplayer) ceremony panel.
+     Host: shows an offer QR, then scans each guest's answer QR.
+     Guest: scans the host's offer QR, then shows their answer QR. -->
+<div id="couch-panel" style="display:none">
+  <div class="couch-head"><span>&#128715;&#65039; COUCH CO-OP</span><button id="couch-close" aria-label="close">&#10005;</button></div>
+
+  <div id="couch-home" class="couch-screen">
+    <p class="couch-blurb">no internet? no problem. one android hotspot becomes the whole network.</p>
+    <button id="couch-host-btn" class="couch-big-btn">&#128225; host a couch game</button>
+    <button id="couch-join-btn" class="couch-big-btn">&#128247; join a couch game</button>
+    <p class="couch-tiny">host from an android — iphones can join, but can't host.</p>
+  </div>
+
+  <div id="couch-host" class="couch-screen" style="display:none">
+    <ol class="couch-steps">
+      <li>on your <b>android</b>, turn on the <b>hotspot</b> in settings — no data needed</li>
+      <li>everyone joins that wifi</li>
+      <li>they open limbo &rarr; <b>join a couch game</b> &rarr; scan this code</li>
+    </ol>
+    <canvas id="couch-host-qr" class="couch-qr"></canvas>
+    <div id="couch-host-status" class="couch-status">making your code&hellip;</div>
+    <button id="couch-host-scan-btn" class="couch-big-btn">&#128247; scan guest's code</button>
+    <div class="couch-sub">PAIRED DRIFTERS</div>
+    <div id="couch-roster" class="couch-roster"><div class="couch-empty">nobody yet — show them your code</div></div>
+    <button id="couch-host-stop" class="couch-quiet-btn">stop hosting</button>
+  </div>
+
+  <div id="couch-host-scan" class="couch-screen" style="display:none">
+    <p class="couch-blurb">have the guest show you <b>their</b> code — point the camera at it</p>
+    <div class="couch-view"><video id="couch-host-video" playsinline muted></video><div class="couch-frame"></div></div>
+    <div id="couch-host-scan-status" class="couch-status">scanning&hellip;</div>
+    <button id="couch-host-scan-back" class="couch-quiet-btn">back</button>
+  </div>
+
+  <div id="couch-join" class="couch-screen" style="display:none">
+    <p class="couch-blurb">join the host's wifi first, then <b>scan their code</b></p>
+    <div class="couch-view"><video id="couch-join-video" playsinline muted></video><div class="couch-frame"></div></div>
+    <div id="couch-join-status" class="couch-status">scanning for the host's code&hellip;</div>
+    <button id="couch-join-manual-btn" class="couch-quiet-btn">type code instead</button>
+    <div id="couch-join-manual" style="display:none">
+      <textarea id="couch-join-code" rows="3" placeholder="paste the host's code&hellip;" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+      <button id="couch-join-code-btn" class="couch-big-btn">link</button>
+    </div>
+    <button id="couch-join-back" class="couch-quiet-btn">back</button>
+  </div>
+
+  <div id="couch-join-show" class="couch-screen" style="display:none">
+    <p class="couch-blurb"><b>show this code to the host</b> — they scan it, and you're in</p>
+    <canvas id="couch-join-qr" class="couch-qr"></canvas>
+    <div id="couch-join-show-status" class="couch-status">waiting for the host to scan&hellip;</div>
+    <button id="couch-join-cancel" class="couch-quiet-btn">cancel</button>
+  </div>
+</div>
+
+<!-- start overlay: the click also unlocks WebAudio -->
+<div id="start-overlay">
+  <h1>LIMBO</h1>
+  <p class="sub">a portal universe</p>
+  <input id="name-input" maxlength="16" placeholder="what do other drifters call you?" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <!-- build 38: numbered servers with live headcounts, rendered once net boots -->
+  <p class="tiny server-label">pick a server</p>
+  <div id="server-list" role="listbox" aria-label="pick a server"></div>
+  <button id="drift-btn" disabled>loading…</button>
+  <!-- loading indicator while art textures download: in the overlay's column
+       (under the button) so it can never overlap the title/subtitle -->
+  <div id="loading"><span>summoning limbo</span></div>
+  <p class="tiny">headphones recommended · 4 realms + sound room + endless journey · 20 echoes</p>
+  <div id="build-stamp" aria-hidden="true"></div>
+</div>
+
+<!-- minimal touch joystick UI -->
+<div id="joy-base"><div id="joy-knob"></div></div>
+
+<script type="module" src="js/game.js?v=81"></script>
+</body>
+</html>
