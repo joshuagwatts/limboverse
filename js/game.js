@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=95';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=95';
-import { CouchNet } from './couch.js?v=95';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=95';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=95';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=95';
+import { AudioEngine } from './audio.js?v=96';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=96';
+import { CouchNet } from './couch.js?v=96';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=96';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=96';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=96';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -11149,8 +11149,24 @@ function buildJourneyRays(scene) {
       new THREE.Mesh(tailGeo, mat), new THREE.Mesh(dorsalGeo, mat),
       cephL, cephR, hit, aura);
     g.scale.setScalar(1.1 + rnd() * 0.7);
+    // build 96: each ray leaves a fading trail — a ribbon of where it's been
+    const TR_N = 36;
+    const trPos = new Float32Array(TR_N * 3);
+    const trCol = new Float32Array(TR_N * 3);
+    for (let i = 0; i < TR_N; i++) {
+      const f = Math.pow(1 - i / TR_N, 1.6); // bright head, fading tail
+      trCol[i * 3] = 0.35 * f; trCol[i * 3 + 1] = 0.85 * f; trCol[i * 3 + 2] = 1.0 * f;
+    }
+    const trGeo = new THREE.BufferGeometry();
+    trGeo.setAttribute('position', new THREE.BufferAttribute(trPos, 3));
+    trGeo.setAttribute('color', new THREE.BufferAttribute(trCol, 3));
+    const trail = new THREE.Points(trGeo, new THREE.PointsMaterial({
+      size: 1.6, vertexColors: true, transparent: true, opacity: 0.75,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+    trail.frustumCulled = false;
+    g.add(trail);
     const ray = {
-      group: g, wingR, wingL, hit, aura,
+      group: g, wingR, wingL, hit, aura, trail, trPos, trGeo, trTick: 0,
       /* Build 83 flight brain: smooth wander on layered-sine headings.
          heading drifts on slow seeded sines — endless curving, no targets,
          no snaps. baseY sits in the wisp's band so you can fly alongside. */
@@ -11260,6 +11276,17 @@ function updateJourneyRays(dt, t) {
     // aura breathes with the flap
     if (ray.aura) {
       ray.aura.material.opacity = 0.40 + 0.10 * Math.sin(t * 1.3 + ray.yp);
+    }
+    // build 96: trail follows — shift history, push current pos every few frames
+    if (ray.trail) {
+      ray.trTick += dt;
+      if (ray.trTick > 0.06) {
+        ray.trTick = 0;
+        ray.trPos.copyWithin(0, 3);
+        const o = (36 - 1) * 3;
+        ray.trPos[o] = g.position.x; ray.trPos[o + 1] = g.position.y; ray.trPos[o + 2] = g.position.z;
+        ray.trGeo.attributes.position.needsUpdate = true;
+      }
     }
   }
 }
@@ -11375,19 +11402,25 @@ function journeyBoostCalc(dt) {
     }
   } catch (e) {}
   if (peerNear < 30) boost += 0.25 * (1 - peerNear / 30);
-  // build 50: drafting a manta ray — tuck in close and it pulls you along;
-  // your called ray tows you a little extra
+  // build 96: drafting a manta ray — tuck in close and match its pace;
+  // fly together at the same speed. Your vmax is 16*boost, so the boost
+  // targets the nearest ray's cruise speed.
   let rayNear = Infinity;
   let rayTow = false;
+  let nearCruise = 0;
   if (journey.rays) {
     for (const r of journey.rays) {
       const d = Math.hypot(wisp.position.x - r.group.position.x,
         wisp.position.y - r.group.position.y, wisp.position.z - r.group.position.z);
-      if (d < rayNear) rayNear = d;
+      if (d < rayNear) { rayNear = d; nearCruise = r.cruise; }
       if (r.following && d < 25) rayTow = true;
     }
   }
-  if (rayNear < 40) boost += 0.3 * (1 - rayNear / 40);
+  if (rayNear < 45 && nearCruise > 0) {
+    const prox = 1 - rayNear / 45;
+    const wantBoost = nearCruise / 16;
+    boost = Math.max(boost, 1 + (wantBoost - 1) * prox);
+  }
   if (rayTow) boost += 0.15;
   // bursts decay
   journey.ringBoost = Math.max(0, (journey.ringBoost || 0) - dt * 0.55);
