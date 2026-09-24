@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=99';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=99';
-import { CouchNet } from './couch.js?v=99';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=99';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=99';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=99';
+import { AudioEngine } from './audio.js?v=100';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=100';
+import { CouchNet } from './couch.js?v=100';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=100';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=100';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=100';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -11347,10 +11347,9 @@ function journeyBoardVehicle(v) {
   journey.vehicle = v;
   v.boarded = true;
   // hide the wisp, show the vehicle at the wisp's spot
+  // (the vehicle group is already in the scene from buildJourneyVehicles)
   if (wispCore) wispCore.visible = false;
   if (wispGroup) wispGroup.visible = false;
-  scene.remove(v.group); // re-add to keep it in the render list cleanly
-  scene.add(v.group);
   v.heading = Math.atan2(-wisp.position.x, -wisp.position.z);
   journeyToast('riding the ' + v.def.name + ' — tap ✕ to hop out');
   const exitBtn = document.getElementById('veh-exit');

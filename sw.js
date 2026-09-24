@@ -14,24 +14,24 @@
  * successful (ok) responses).
  */
 
-const BUILD = '99';
+const BUILD = '100';
 const CACHE = `limbo-v${BUILD}`;
 
-/* Same version stamps the page uses (?v=99). query strings are part of
+/* Same version stamps the page uses (?v=100). query strings are part of
    the cache key — that is exactly what we want. */
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/style.css?v=99',
-  './js/game.js?v=99',
-  './js/net.js?v=99',
-  './js/couch.js?v=99',
-  './js/jam.js?v=99',
-  './js/audio.js?v=99',
-  './js/flock.js?v=99',
-  './js/vendor/qrcode.js?v=99',
-  './js/vendor/jsqr.js?v=99',
+  './css/style.css?v=100',
+  './js/game.js?v=100',
+  './js/net.js?v=100',
+  './js/couch.js?v=100',
+  './js/jam.js?v=100',
+  './js/audio.js?v=100',
+  './js/flock.js?v=100',
+  './js/vendor/qrcode.js?v=100',
+  './js/vendor/jsqr.js?v=100',
   './assets/realm1.jpg',
   './assets/realm2.jpg',
   './assets/realm3.jpg',
