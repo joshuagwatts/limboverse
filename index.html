@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#020204">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=91">
+<link rel="stylesheet" href="css/style.css?v=92">
 <script type="importmap">
 {
   "imports": {
@@ -24,8 +24,8 @@
 </script>
 <!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
      Local files, not a CDN — the couch co-op ceremony must work offline. -->
-<script src="js/vendor/qrcode.js?v=91"></script>
-<script src="js/vendor/jsqr.js?v=91"></script>
+<script src="js/vendor/qrcode.js?v=92"></script>
+<script src="js/vendor/jsqr.js?v=92"></script>
 <!-- build 34: offline-first PWA — after one online visit the whole game
      (including three.js) is cached and boots with zero bars. -->
 <script>
@@ -491,35 +491,44 @@ if ('serviceWorker' in navigator) {
   <div id="ws-shelf" class="ws-models"></div>
 </div>
 
-<!-- build 68: sculpt mode — Nomad-style touch sculpting on the selected piece.
-     Canvas-first: floating brush toolbar, minimal chrome. -->
+<!-- build 92: sculpt mode — Nomad-layout revamp. Left vertical tool strip,
+     top bar (undo/redo/symmetry/wireframe), bottom radius+intensity sliders,
+     contextual sub-panel for mask/paint/detail. -->
 <div id="sculpt-hud" style="display:none">
   <div class="sc-top">
     <span id="sc-name">sculpt</span>
-    <div class="sc-detail" id="sc-detail" role="group" aria-label="detail level">
-      <button data-detail="low">low</button>
-      <button data-detail="med" class="sel">med</button>
-      <button data-detail="high">high</button>
-    </div>
+    <button id="sc-undo" class="off" aria-label="undo">&#8617;</button>
+    <button id="sc-redo" class="off" aria-label="redo">&#8618;</button>
     <button id="sc-sym" class="on" aria-label="mirror symmetry">&#8646;</button>
     <button id="sc-invert" aria-label="invert brush">&#8645;</button>
-    <button id="sc-undo" class="off" aria-label="undo stroke">&#8617; undo</button>
+    <button id="sc-wire" aria-label="wireframe">wire</button>
     <button id="sc-done">&#10003; done</button>
   </div>
+  <div class="sc-tools" id="sc-tools" role="toolbar" aria-label="sculpt tools"></div>
   <div class="sc-bottom">
     <div class="sc-sliders">
-      <label>size <input id="sc-size" type="range" min="8" max="200" step="1" value="55"></label>
-      <label>push <input id="sc-int" type="range" min="5" max="100" step="1" value="50"></label>
+      <label>radius <input id="sc-size" type="range" min="8" max="200" step="1" value="55"></label>
+      <label>intensity <input id="sc-int" type="range" min="5" max="100" step="1" value="50"></label>
     </div>
-    <div class="sc-brushes" id="sc-brushes">
-      <button data-brush="grab"><span class="g">&#9995;</span><span class="t">grab</span></button>
-      <button data-brush="clay" class="sel"><span class="g">&#9679;</span><span class="t">clay</span></button>
-      <button data-brush="smooth"><span class="g">~</span><span class="t">smooth</span></button>
-      <button data-brush="flatten"><span class="g">&#9646;</span><span class="t">flat</span></button>
-      <button data-brush="pinch"><span class="g">&#8601;</span><span class="t">pinch</span></button>
-      <button data-brush="inflate"><span class="g">&#9678;</span><span class="t">inflate</span></button>
+    <div class="sc-sub" id="sc-sub">
+      <div class="sc-subrow" id="sc-sub-detail">
+        <span class="sc-sublabel">detail</span>
+        <button data-detail="low">low</button>
+        <button data-detail="med" class="sel">med</button>
+        <button data-detail="high">high</button>
+      </div>
+      <div class="sc-subrow" id="sc-sub-mask" style="display:none">
+        <span class="sc-sublabel">mask</span>
+        <button id="sc-mask-clear">clear</button>
+        <button id="sc-mask-invert">invert</button>
+        <button id="sc-mask-blur">blur</button>
+      </div>
+      <div class="sc-subrow" id="sc-sub-paint" style="display:none">
+        <span class="sc-sublabel">paint</span>
+        <div class="sc-palette" id="sc-palette"></div>
+      </div>
     </div>
-    <div class="sc-hint">drag the clay to push it &middot; drag the background to orbit &middot; pinch to zoom</div>
+    <div class="sc-hint" id="sc-hint">drag the clay to push it &middot; drag the background to orbit &middot; pinch to zoom</div>
   </div>
 </div>
 
@@ -648,6 +657,6 @@ if ('serviceWorker' in navigator) {
 <!-- minimal touch joystick UI -->
 <div id="joy-base"><div id="joy-knob"></div></div>
 
-<script type="module" src="js/game.js?v=91"></script>
+<script type="module" src="js/game.js?v=92"></script>
 </body>
 </html>

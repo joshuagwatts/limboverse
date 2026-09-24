@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=91';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=91';
-import { CouchNet } from './couch.js?v=91';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=91';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=91';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=91';
+import { AudioEngine } from './audio.js?v=92';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=92';
+import { CouchNet } from './couch.js?v=92';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=92';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=92';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=92';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -9071,7 +9071,22 @@ const SCULPT_DETAIL = {
   med:  { sphere: [96, 64],   box: [22, 22, 22], cylinder: [80, 40],  cone: [80, 40],  torus: [80, 40],  plane: [80, 80] },
   high: { sphere: [160, 112], box: [34, 34, 34], cylinder: [120, 60], cone: [120, 60], torus: [120, 60], plane: [120, 120] },
 };
-const SCULPT_BRUSHES = ['grab', 'clay', 'smooth', 'flatten', 'pinch', 'inflate'];
+const SCULPT_BRUSHES = ['clay', 'crease', 'smooth', 'flat', 'pinch', 'polish', 'inflate', 'drag', 'move', 'trim', 'mask', 'paint'];
+/* Nomad-order tool metadata: glyph + label for the left strip. */
+const SCULPT_TOOLS = [
+  { id: 'clay', g: '●', t: 'clay' },
+  { id: 'crease', g: '⌁', t: 'crease' },
+  { id: 'smooth', g: '~', t: 'smooth' },
+  { id: 'flat', g: '▦', t: 'flat' },
+  { id: 'pinch', g: '⇊', t: 'pinch' },
+  { id: 'polish', g: '✦', t: 'polish' },
+  { id: 'inflate', g: '◉', t: 'inflate' },
+  { id: 'drag', g: '➤', t: 'drag' },
+  { id: 'move', g: '✋', t: 'move' },
+  { id: 'trim', g: '✂', t: 'trim' },
+  { id: 'mask', g: '◐', t: 'mask' },
+  { id: 'paint', g: '🖌', t: 'paint' },
+];
 
 function sculptBaseGeo(type, detail) {
   const lv = SCULPT_DETAIL[detail] || SCULPT_DETAIL.med;
@@ -9106,12 +9121,16 @@ function sculptB64ToF32(b64, count) {
   } catch (e) { return null; }
 }
 /* Dense geometry rebuilt from saved sculpt data (type + detail + verts). */
-function sculptGeoFromData(type, detail, v) {
+function sculptGeoFromData(type, detail, v, c) {
   try {
     const geo = sculptBaseGeo(type, detail);
     const arr = sculptB64ToF32(v, geo.attributes.position.count * 3);
     if (!arr) { geo.dispose(); return null; }
     geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    if (c) {
+      const cols = sculptB64ToF32(c, geo.attributes.position.count * 3);
+      if (cols) geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    }
     geo.computeVertexNormals();
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 4);
     return geo;
@@ -9119,11 +9138,12 @@ function sculptGeoFromData(type, detail, v) {
 }
 /* Rebuild a mesh from a sanitized sculpted spec ({t, detail, v, c}). */
 function sculptMeshFromSpec(s) {
-  const geo = sculptGeoFromData(s.t, s.detail, s.v);
+  const geo = sculptGeoFromData(s.t, s.detail, s.v, s.vc);
   if (!geo) return null;
   const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(s.c || '#7ae0ff'), roughness: 0.45, metalness: 0.35,
   });
+  if (geo.attributes.color) mat.vertexColors = true;
   return new THREE.Mesh(geo, mat);
 }
 
@@ -9131,24 +9151,110 @@ const sculpt = {
   active: false, pieceId: null, ptype: 'sphere', mesh: null,
   brush: 'clay', size: 0.55, intensity: 0.5,
   sym: true, invert: false, detail: 'med',
-  stroke: null, strokeId: null, undo: [], strokeCount: 0,
+  stroke: null, strokeId: null, undo: [], redo: [], strokeCount: 0,
+  mask: null,           // Float32Array per-vert 0..1 — Nomad mask
+  paintColor: '#ff5a5a', // active paint color
+  hasPaint: false,       // vertex colors allocated
+  wire: false,
   orbit: { theta: 0.7, phi: 1.12, radius: 7, target: new THREE.Vector3() },
   orbiting: null, orbitLast: null, pinching: false, pinchDist: 0,
   pointers: new Map(),
   mouseDown: false, mouseRole: null,
   neighbors: null, lastNormalAt: 0,
 };
+/* Nomad Mask helpers. */
+function sculptMaskAlloc() {
+  if (!sculpt.mesh) return;
+  const n = sculpt.mesh.geometry.attributes.position.count;
+  if (!sculpt.mask || sculpt.mask.length !== n) sculpt.mask = new Float32Array(n);
+}
+function sculptMaskClear() { if (sculpt.mask) sculpt.mask.fill(0); sculptMaskShow(); }
+function sculptMaskInvert() {
+  if (!sculpt.mask) return;
+  for (let i = 0; i < sculpt.mask.length; i++) sculpt.mask[i] = 1 - sculpt.mask[i];
+  sculptMaskShow();
+}
+/* Soften mask edges — one neighbor-average pass, Nomad-style. */
+function sculptMaskBlur() {
+  if (!sculpt.mask || !sculpt.neighbors) return;
+  const src = sculpt.mask.slice(), nb = sculpt.neighbors;
+  for (let i = 0; i < sculpt.mask.length; i++) {
+    const list = nb[i];
+    if (!list || !list.length) continue;
+    let s = src[i];
+    for (let j = 0; j < list.length; j++) s += src[list[j]];
+    sculpt.mask[i] = s / (list.length + 1);
+  }
+  sculptMaskShow();
+}
+/* Show the mask like Nomad does: masked areas go dark. */
+function sculptMaskShow() {
+  const mesh = sculpt.mesh;
+  if (!mesh || !sculpt.mask) return;
+  sculptPaintAlloc();
+  const colA = mesh.geometry.attributes.color;
+  if (!colA) return;
+  const arr = colA.array;
+  const anyMask = sculpt.mask.some(v => v > 0.01);
+  for (let i = 0; i < sculpt.mask.length; i++) {
+    const m = anyMask ? sculpt.mask[i] : 0;
+    const vi = i * 3;
+    // darken toward near-black where masked; unmasked keeps paint/base
+    const base = sculpt._paintBase ? sculpt._paintBase[i] : null;
+    const r = base ? base[0] : 1, g = base ? base[1] : 1, b = base ? base[2] : 1;
+    arr[vi] = r * (1 - m * 0.85); arr[vi + 1] = g * (1 - m * 0.85); arr[vi + 2] = b * (1 - m * 0.85);
+  }
+  colA.needsUpdate = true;
+}
+/* Vertex-color paint. Allocates the color attribute on first use. */
+function sculptPaintAlloc() {
+  const mesh = sculpt.mesh;
+  if (!mesh) return;
+  const geo = mesh.geometry;
+  if (!geo.attributes.color) {
+    const n = geo.attributes.position.count;
+    const cols = new Float32Array(n * 3).fill(1);
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    if (mesh.material) mesh.material.vertexColors = true;
+    sculpt.hasPaint = true;
+  }
+  if (!sculpt._paintBase) {
+    // remember unmasked base colors so mask preview can restore them
+    const colA = geo.attributes.color, n = colA.count;
+    sculpt._paintBase = [];
+    for (let i = 0; i < n; i++) sculpt._paintBase.push([colA.array[i*3], colA.array[i*3+1], colA.array[i*3+2]]);
+  }
+}
+const _scPaintCol = new THREE.Color();
+function sculptPaintVert(i, f1, f2) {
+  const mesh = sculpt.mesh;
+  if (!mesh) return;
+  sculptPaintAlloc();
+  const colA = mesh.geometry.attributes.color;
+  if (!colA) return;
+  _scPaintCol.set(sculpt.paintColor);
+  const w = Math.min(1, (f1 || 0) + (f2 || 0)) * Math.abs(sculpt.intensity);
+  if (w <= 0) return;
+  const vi = i * 3, arr = colA.array;
+  arr[vi] = arr[vi] + (_scPaintCol.r - arr[vi]) * w;
+  arr[vi + 1] = arr[vi + 1] + (_scPaintCol.g - arr[vi + 1]) * w;
+  arr[vi + 2] = arr[vi + 2] + (_scPaintCol.b - arr[vi + 2]) * w;
+  if (sculpt._paintBase) sculpt._paintBase[i] = [arr[vi], arr[vi + 1], arr[vi + 2]];
+}
 const sculptHud = document.getElementById('sculpt-hud');
 const scNameEl = document.getElementById('sc-name');
-const scDetailEl = document.getElementById('sc-detail');
-const scBrushesEl = document.getElementById('sc-brushes');
+const scToolsEl = document.getElementById('sc-tools');
 const scSizeEl = document.getElementById('sc-size');
 const scIntEl = document.getElementById('sc-int');
 const scSymEl = document.getElementById('sc-sym');
 const scInvertEl = document.getElementById('sc-invert');
 const scUndoEl = document.getElementById('sc-undo');
+const scRedoEl = document.getElementById('sc-redo');
+const scWireEl = document.getElementById('sc-wire');
 const scDoneEl = document.getElementById('sc-done');
 const wsSculptEl = document.getElementById('ws-sculpt');
+/* Nomad paint palette — a working set of clay colors. */
+const SCULPT_PALETTE = ['#ff5a5a', '#ff9a3c', '#ffd23c', '#7ee081', '#3cc8ff', '#3c7bff', '#b44dff', '#ff4dd2', '#ffffff', '#1a1a22'];
 
 const _scA = new THREE.Vector3(), _scB = new THREE.Vector3(), _scC = new THREE.Vector3();
 const _scQ = new THREE.Quaternion();
@@ -9185,10 +9291,32 @@ function sculptDispInto(brush, cx, cy, cz, nx, ny, nz, px, py, pz, vi, arr, nrm,
     if (nrm) { D.x = nrm[vi] * kClay; D.y = nrm[vi + 1] * kClay; D.z = nrm[vi + 2] * kClay; }
     else { D.x = nx * kClay; D.y = ny * kClay; D.z = nz * kClay; }
   }
-  else if (brush === 'flatten') {
+  else if (brush === 'flat') {
     const a = (px - cx) * nx + (py - cy) * ny + (pz - cz) * nz;
     const k = -0.9 * inten * a;
     D.x = nx * k; D.y = ny * k; D.z = nz * k;
+  }
+  else if (brush === 'crease') {
+    // sharp valley: strong negative clay + pull toward the stroke line
+    const k = -1.6 * inten;
+    D.x = nx * kClay * -1.4; D.y = ny * kClay * -1.4; D.z = nz * kClay * -1.4;
+    const tx = cx - px, ty = cy - py, tz = cz - pz;
+    const a = tx * nx + ty * ny + tz * nz;
+    const kp = 0.9 * inten;
+    D.x += (tx - nx * a) * kp; D.y += (ty - ny * a) * kp; D.z += (tz - nz * a) * kp;
+  }
+  else if (brush === 'polish') {
+    // flatten-lite blended with relax: smooths while holding volume
+    const a = (px - cx) * nx + (py - cy) * ny + (pz - cz) * nz;
+    const kf = -0.45 * inten * a;
+    const nb = sculpt.neighbors[vi / 3];
+    let ax = 0, ay = 0, az = 0;
+    for (let j = 0; j < nb.length; j++) { const jx = nb[j] * 3; ax += arr[jx]; ay += arr[jx + 1]; az += arr[jx + 2]; }
+    const m = 1 / Math.max(1, nb.length);
+    const ks = 0.28 * Math.abs(inten);
+    D.x = nx * kf + (ax * m - px) * ks;
+    D.y = ny * kf + (ay * m - py) * ks;
+    D.z = nz * kf + (az * m - pz) * ks;
   }
   else if (brush === 'pinch') {
     const tx = cx - px, ty = cy - py, tz = cz - pz;
@@ -9203,7 +9331,12 @@ function sculptDispInto(brush, cx, cy, cz, nx, ny, nz, px, py, pz, vi, arr, nrm,
     const m = 1 / Math.max(1, nb.length);
     D.x = (ax * m - px) * kSmooth; D.y = (ay * m - py) * kSmooth; D.z = (az * m - pz) * kSmooth;
   }
-  else if (brush === 'grab' && g) { D.x = g.x; D.y = g.y; D.z = g.z; }
+  else if (brush === 'move' && g) { D.x = g.x; D.y = g.y; D.z = g.z; }
+  else if (brush === 'drag' && g) {
+    // Nomad Drag: like move but weighted by falloff — the surface stretches
+    // along the stroke instead of translating as a block
+    D.x = g.x * 0.9; D.y = g.y * 0.9; D.z = g.z * 0.9;
+  }
   else { D.x = 0; D.y = 0; D.z = 0; }
 }
 /* The heart: apply one dab. c/n in local space; g is the local grab delta.
@@ -9218,7 +9351,7 @@ function sculptApplyDab(c, n, g) {
   const r = sculptLocalRadius();
   const brush = sculpt.brush;
   let inten = sculpt.intensity;
-  if (sculpt.invert && brush !== 'smooth' && brush !== 'grab') inten = -inten;
+  if (sculpt.invert && brush !== 'smooth' && brush !== 'move') inten = -inten;
   const kClay = 0.11 * inten;
   const kSmooth = 0.55 * Math.abs(inten);
   const cx = c.x, cy = c.y, cz = c.z;
@@ -9238,17 +9371,36 @@ function sculptApplyDab(c, n, g) {
     }
     if (f1 === 0 && f2 === 0) continue;
     let ox = 0, oy = 0, oz = 0;
+    const mArr = sculpt.mask;
+    if (brush === 'mask') {
+      // Nomad Mask: paint protection — masked verts don't move
+      const add = (sculpt.invert ? -1 : 1) * Math.abs(inten) * 0.9;
+      if (f1 > 0 && mArr) mArr[i] = Math.min(1, Math.max(0, mArr[i] + f1 * add));
+      if (f2 > 0 && mArr) mArr[i] = Math.min(1, Math.max(0, mArr[i] + f2 * add));
+      continue;
+    }
+    if (brush === 'paint') {
+      // vertex-color paint — Joshua's texture ask, Nomad-style
+      sculptPaintVert(i, f1, f2);
+      continue;
+    }
+    if (brush === 'trim') continue; // trim cuts on stroke release, not per-dab
+    const mWt = mArr ? (1 - mArr[i]) : 1; // mask protection
+    if (mWt <= 0) continue;
     if (f1 > 0) {
       sculptDispInto(brush, cx, cy, cz, nx, ny, nz, px, py, pz, vi, arr, nrm, kClay, kSmooth, inten, g);
-      ox += _scD.x * f1; oy += _scD.y * f1; oz += _scD.z * f1;
+      ox += _scD.x * f1 * mWt; oy += _scD.y * f1 * mWt; oz += _scD.z * f1 * mWt;
     }
     if (f2 > 0) {
       sculptDispInto(brush, -cx, cy, cz, -nx, ny, nz, px, py, pz, vi, arr, nrm, kClay, kSmooth, inten, gM);
-      ox += _scD.x * f2; oy += _scD.y * f2; oz += _scD.z * f2;
+      ox += _scD.x * f2 * mWt; oy += _scD.y * f2 * mWt; oz += _scD.z * f2 * mWt;
     }
     arr[vi] = px + ox; arr[vi + 1] = py + oy; arr[vi + 2] = pz + oz;
   }
   posA.needsUpdate = true;
+  if (brush === 'paint' && sculpt.mesh.geometry.attributes.color) {
+    sculpt.mesh.geometry.attributes.color.needsUpdate = true;
+  }
 }
 function sculptTouchNormals(force) {
   if (!sculpt.mesh) return;
@@ -9269,10 +9421,15 @@ function sculptBeginStroke(hit) {
   const local = mesh.worldToLocal(hit.point.clone());
   const n = hit.face && hit.face.normal ? hit.face.normal.clone().normalize() : new THREE.Vector3(0, 1, 0);
   const st = { last: local, lastN: n, plane: null, lastPlanePt: null, brush: sculpt.brush };
-  if (sculpt.brush === 'grab') {
+  if (sculpt.brush === 'move' || sculpt.brush === 'drag') {
     camera.getWorldDirection(_scA);
     st.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_scA.clone(), hit.point);
     st.lastPlanePt = hit.point.clone();
+  }
+  if (sculpt.brush === 'trim') {
+    // Nomad Trim: drag a line; on release everything on one side is cut away
+    st.trimStart = { x: hit.point.x, y: hit.point.y };
+    st.trimEnd = null;
   }
   sculpt.stroke = st;
   sculptApplyDab(local, n, null); // a tap still makes a mark
@@ -9289,11 +9446,15 @@ function sculptStrokeTo(nx, ny) {
   const local = sculpt.mesh.worldToLocal(hit.point.clone());
   const n = hit.face && hit.face.normal ? hit.face.normal.clone().normalize() : st.lastN;
   let g = null;
-  if (st.brush === 'grab' && st.plane && _raycaster.ray.intersectPlane(st.plane, _scB)) {
+  if ((st.brush === 'move' || st.brush === 'drag') && st.plane && _raycaster.ray.intersectPlane(st.plane, _scB)) {
     _scC.copy(_scB).sub(st.lastPlanePt);
     st.lastPlanePt.copy(_scB);
     sculpt.mesh.getWorldQuaternion(_scQ).invert();
     g = _scC.applyQuaternion(_scQ).divideScalar(Math.max(0.05, sculpt.mesh.scale.x));
+  }
+  if (st.brush === 'trim') {
+    // track the screen-space line for the cut
+    st.trimEnd = { x: (nx * 0.5 + 0.5) * window.innerWidth, y: (-ny * 0.5 + 0.5) * window.innerHeight };
   }
   // dab spacing: walk the segment so fast drags can't skip
   const r = sculptLocalRadius();
@@ -9313,23 +9474,80 @@ function sculptStrokeTo(nx, ny) {
   return true;
 }
 function sculptEndStroke() {
-  if (!sculpt.stroke) return;
+  const st = sculpt.stroke;
+  if (!st) return;
   sculpt.stroke = null;
+  if (st.brush === 'trim' && st.trimStart && st.trimEnd) sculptTrimCut(st);
   sculpt.strokeCount++;
   sculptTouchNormals(true);
   sculptPersistPiece();
   sculptRenderUndo();
 }
+/* Nomad Trim: the drag defines a screen-space line; verts on the far side
+   of the line (away from the drag direction) get flattened to the cut plane,
+   reading as a clean slice. Masked verts are spared. */
+function sculptTrimCut(st) {
+  const mesh = sculpt.mesh;
+  if (!mesh) return;
+  const dx = st.trimEnd.x - st.trimStart.x, dy = st.trimEnd.y - st.trimStart.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 8) return; // tap, not a cut
+  // line normal in screen space — cut the side the stroke moved away from
+  const lnx = -dy / len, lny = dx / len;
+  const posA = mesh.geometry.attributes.position;
+  const arr = posA.array, count = posA.count;
+  const mArr = sculpt.mask;
+  const v = new THREE.Vector3();
+  // cut plane: through the stroke midpoint, facing the camera
+  camera.getWorldDirection(_scA);
+  const mid = new THREE.Vector3(
+    (st.trimStart.x + st.trimEnd.x) / 2,
+    (st.trimStart.y + st.trimEnd.y) / 2, 0.5).unproject(camera);
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_scA.clone().negate(), mid);
+  let cut = 0;
+  for (let i = 0; i < count; i++) {
+    if (mArr && mArr[i] > 0.5) continue;
+    v.set(arr[i*3], arr[i*3+1], arr[i*3+2]).applyMatrix4(mesh.matrixWorld).project(camera);
+    const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+    const side = (sx - st.trimStart.x) * lnx + (sy - st.trimStart.y) * lny;
+    if (side > 0) {
+      // pull the world point onto the cut plane, back to local
+      const wp = new THREE.Vector3(arr[i*3], arr[i*3+1], arr[i*3+2]).applyMatrix4(mesh.matrixWorld);
+      plane.projectPoint(wp, wp);
+      const lp = mesh.worldToLocal(wp);
+      arr[i*3] = lp.x; arr[i*3+1] = lp.y; arr[i*3+2] = lp.z;
+      cut++;
+    }
+  }
+  if (cut) { posA.needsUpdate = true; }
+}
 function sculptUndoPush() {
   if (!sculpt.mesh) return;
   sculpt.undo.push(sculpt.mesh.geometry.attributes.position.array.slice());
   if (sculpt.undo.length > 12) sculpt.undo.shift();
+  sculpt.redo.length = 0; // new stroke clears redo
+  sculptRenderUndo();
+}
+function sculptRedo() {
+  if (!sculpt.active || !sculpt.mesh || !sculpt.redo.length) return false;
+  const snap = sculpt.redo.pop();
+  const posA = sculpt.mesh.geometry.attributes.position;
+  if (snap.length !== posA.array.length) return false;
+  sculpt.undo.push(posA.array.slice());
+  posA.array.set(snap);
+  posA.needsUpdate = true;
+  sculptTouchNormals(true);
+  sculptPersistPiece();
+  sculptRenderUndo();
+  return true;
 }
 function sculptUndo() {
   if (!sculpt.active || !sculpt.mesh || !sculpt.undo.length) return false;
   const snap = sculpt.undo.pop();
   const posA = sculpt.mesh.geometry.attributes.position;
   if (snap.length !== posA.array.length) return false; // topology changed — can't restore
+  sculpt.redo.push(posA.array.slice());
   posA.array.set(snap);
   posA.needsUpdate = true;
   sculptTouchNormals(true);
@@ -9343,7 +9561,10 @@ function sculptPersistPiece() {
   const p = wsFind(sculpt.pieceId);
   if (!p || !sculpt.mesh) return;
   try {
-    p.sculpt = { detail: sculpt.detail, v: sculptF32ToB64(sculpt.mesh.geometry.attributes.position.array) };
+    const spec = { detail: sculpt.detail, v: sculptF32ToB64(sculpt.mesh.geometry.attributes.position.array) };
+    const colA = sculpt.mesh.geometry.attributes.color;
+    if (colA) spec.vc = sculptF32ToB64(colA.array);
+    p.sculpt = spec;
   } catch (e) { /* quota pressure surfaces at save time */ }
 }
 
@@ -9355,7 +9576,7 @@ function sculptEnter() {
   if (!p) { addSystemLine('tap a piece first, then hit sculpt'); return false; }
   wsPushUndo();
   const detail = (p.sculpt && SCULPT_DETAIL[p.sculpt.detail]) ? p.sculpt.detail : 'med';
-  let geo = (p.sculpt && p.sculpt.v) ? sculptGeoFromData(p.type, detail, p.sculpt.v) : null;
+  let geo = (p.sculpt && p.sculpt.v) ? sculptGeoFromData(p.type, detail, p.sculpt.v, p.sculpt.vc) : null;
   if (!geo) geo = sculptBaseGeo(p.type, detail);
   try { p.mesh.geometry.dispose(); } catch (e) {}
   p.mesh.geometry = geo;
@@ -9365,7 +9586,9 @@ function sculptEnter() {
   sculpt.mesh = p.mesh;
   sculpt.detail = detail;
   sculpt.stroke = null; sculpt.strokeId = null;
-  sculpt.undo = []; sculpt.strokeCount = 0;
+  sculpt.undo = []; sculpt.redo = []; sculpt.strokeCount = 0;
+  sculpt.mask = null; sculpt._paintBase = null; sculpt.hasPaint = false;
+  sculptMaskAlloc();
   sculpt.pointers.clear();
   sculpt.orbiting = null; sculpt.orbitLast = null;
   sculpt.pinching = false; sculpt.pinchDist = 0;
@@ -9375,9 +9598,12 @@ function sculptEnter() {
   const wp = new THREE.Vector3();
   p.mesh.getWorldPosition(wp);
   sculpt.orbit.target.copy(wp);
+  // Nomad-style: frame the piece to fill the screen
+  geo.computeBoundingSphere();
+  const bs = geo.boundingSphere;
+  sculpt.orbit.radius = Math.max(3.5, Math.min(18, (bs ? bs.radius : 1) * 4.2 * Math.max(1, p.mesh.scale.x)));
   _scA.copy(camera.position).sub(wp);
   const len = _scA.length() || 7;
-  sculpt.orbit.radius = Math.max(3.5, Math.min(18, len));
   sculpt.orbit.theta = Math.atan2(_scA.x, _scA.z);
   sculpt.orbit.phi = Math.max(0.2, Math.min(Math.PI - 0.2,
     Math.acos(Math.max(-1, Math.min(1, _scA.y / len)))));
@@ -9400,12 +9626,6 @@ function sculptExit() {
   chatFocused = false;
   sculptSetHud(false);
   wsRenderPieces(); wsRenderEdit();
-}
-function sculptSetBrush(b) {
-  if (!SCULPT_BRUSHES.includes(b)) return false;
-  sculpt.brush = b;
-  sculptRenderUI();
-  return true;
 }
 function sculptSetDetail(d) {
   if (!sculpt.active || !SCULPT_DETAIL[d] || d === sculpt.detail) return false;
@@ -9560,16 +9780,66 @@ function sculptSetHud(show) {
 function sculptRenderUI() {
   const p = wsFind(sculpt.pieceId);
   if (scNameEl) scNameEl.textContent = p ? `${p.type} — sculpt` : 'sculpt';
-  if (scBrushesEl) scBrushesEl.querySelectorAll('button').forEach((b) =>
+  if (scToolsEl) scToolsEl.querySelectorAll('button').forEach((b) =>
     b.classList.toggle('sel', b.dataset.brush === sculpt.brush));
-  if (scDetailEl) scDetailEl.querySelectorAll('button').forEach((b) =>
+  document.querySelectorAll('#sc-sub-detail button').forEach((b) =>
     b.classList.toggle('sel', b.dataset.detail === sculpt.detail));
   if (scSymEl) scSymEl.classList.toggle('on', sculpt.sym);
   if (scInvertEl) scInvertEl.classList.toggle('on', sculpt.invert);
+  if (scWireEl) scWireEl.classList.toggle('on', sculpt.wire);
+  // contextual sub-panel: mask tools for mask, palette for paint
+  const maskRow = document.getElementById('sc-sub-mask');
+  const paintRow = document.getElementById('sc-sub-paint');
+  if (maskRow) maskRow.style.display = sculpt.brush === 'mask' ? '' : 'none';
+  if (paintRow) paintRow.style.display = sculpt.brush === 'paint' ? '' : 'none';
   sculptRenderUndo();
+}
+/* Build the Nomad left tool strip + paint palette once. */
+function sculptBuildTools() {
+  if (scToolsEl && !scToolsEl.children.length) {
+    for (const t of SCULPT_TOOLS) {
+      const b = document.createElement('button');
+      b.dataset.brush = t.id;
+      b.setAttribute('aria-label', t.t);
+      b.innerHTML = `<span class="g">${t.g}</span><span class="t">${t.t}</span>`;
+      b.addEventListener('click', () => { sculptSetBrush(t.id); b.blur(); });
+      scToolsEl.appendChild(b);
+    }
+  }
+  const pal = document.getElementById('sc-palette');
+  if (pal && !pal.children.length) {
+    for (const c of SCULPT_PALETTE) {
+      const b = document.createElement('button');
+      b.style.background = c;
+      b.setAttribute('aria-label', 'paint ' + c);
+      b.addEventListener('click', () => {
+        sculpt.paintColor = c;
+        pal.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b));
+        b.blur();
+      });
+      if (c === sculpt.paintColor) b.classList.add('sel');
+      pal.appendChild(b);
+    }
+  }
+}
+function sculptSetBrush(b) {
+  if (!SCULPT_BRUSHES.includes(b)) return;
+  sculpt.brush = b;
+  sculptRenderUI();
+  const hints = {
+    clay: 'drag the clay to push it · drag the background to orbit · pinch to zoom',
+    mask: 'paint the areas to protect — masked clay goes dark · clear / invert below',
+    trim: 'drag a line across the clay to slice it',
+    paint: 'paint color straight onto the clay — pick a color below',
+    move: 'drag to move the clay · drag the background to orbit',
+  };
+  const hint = document.getElementById('sc-hint');
+  if (hint) hint.innerHTML = hints[b] || hints.clay;
 }
 function sculptRenderUndo() {
   if (scUndoEl) scUndoEl.classList.toggle('off', !sculpt.undo.length);
+  const redoEl = document.getElementById('sc-redo');
+  if (redoEl) redoEl.classList.toggle('off', !sculpt.redo.length);
 }
 /* Test seam: per-side displacement stats vs the detail baseline. */
 function sculptDispStats() {
@@ -9612,17 +9882,27 @@ function sculptNdcStroke(x1, y1, x2, y2, steps) {
 }
 
 if (wsSculptEl) wsSculptEl.addEventListener('click', () => { sculptEnter(); wsSculptEl.blur(); });
-if (scBrushesEl) scBrushesEl.querySelectorAll('button').forEach((b) => {
-  b.addEventListener('click', () => { sculptSetBrush(b.dataset.brush); b.blur(); });
-});
-if (scDetailEl) scDetailEl.querySelectorAll('button').forEach((b) => {
+sculptBuildTools();
+document.querySelectorAll('#sc-sub-detail button').forEach((b) => {
   b.addEventListener('click', () => { sculptSetDetail(b.dataset.detail); b.blur(); });
 });
+const scMaskClearEl = document.getElementById('sc-mask-clear');
+const scMaskInvertEl = document.getElementById('sc-mask-invert');
+const scMaskBlurEl = document.getElementById('sc-mask-blur');
+if (scMaskClearEl) scMaskClearEl.addEventListener('click', () => { sculptMaskClear(); scMaskClearEl.blur(); });
+if (scMaskInvertEl) scMaskInvertEl.addEventListener('click', () => { sculptMaskInvert(); scMaskInvertEl.blur(); });
+if (scMaskBlurEl) scMaskBlurEl.addEventListener('click', () => { sculptMaskBlur(); scMaskBlurEl.blur(); });
 if (scSizeEl) scSizeEl.addEventListener('input', () => { sculpt.size = Math.max(0.08, (+scSizeEl.value || 55) / 100); });
 if (scIntEl) scIntEl.addEventListener('input', () => { sculpt.intensity = Math.max(0.05, Math.min(1, (+scIntEl.value || 50) / 100)); });
 if (scSymEl) scSymEl.addEventListener('click', () => { sculptSetSym(); scSymEl.blur(); });
 if (scInvertEl) scInvertEl.addEventListener('click', () => { sculptSetInvert(); scInvertEl.blur(); });
 if (scUndoEl) scUndoEl.addEventListener('click', () => { sculptUndo(); scUndoEl.blur(); });
+if (scRedoEl) scRedoEl.addEventListener('click', () => { sculptRedo(); scRedoEl.blur(); });
+if (scWireEl) scWireEl.addEventListener('click', () => {
+  sculpt.wire = !sculpt.wire;
+  if (sculpt.mesh && sculpt.mesh.material) sculpt.mesh.material.wireframe = sculpt.wire;
+  sculptRenderUI(); scWireEl.blur();
+});
 if (scDoneEl) scDoneEl.addEventListener('click', () => { sculptExit(); scDoneEl.blur(); });
 if (workshopBtn) workshopBtn.addEventListener('click', () => { setWorkshopPanel(!ws.open); workshopBtn.blur(); });
 if (workshopCloseBtn) workshopCloseBtn.addEventListener('click', () => setWorkshopPanel(false));
@@ -13339,6 +13619,22 @@ window.__limbo = {
   sculptInvert: (v) => sculptSetInvert(v),
   sculptStroke: (x1, y1, x2, y2, steps) => sculptNdcStroke(x1, y1, x2, y2, steps),
   sculptUndoStroke: () => sculptUndo(),
+  sculptRedoStroke: () => sculptRedo(),
+  sculptMaskCount: () => (sculpt.mask ? [...sculpt.mask].filter(v => v > 0.01).length : -1),
+  sculptHasPaint: () => !!(sculpt.mesh && sculpt.mesh.geometry.attributes.color),
+  sculptDebug: () => {
+    if (!sculpt.mesh) return { active: sculpt.active, mesh: null };
+    const wp = new THREE.Vector3();
+    sculpt.mesh.getWorldPosition(wp);
+    const sp = wp.clone().project(camera);
+    return {
+      active: sculpt.active, brush: sculpt.brush,
+      meshPos: [wp.x.toFixed(2), wp.y.toFixed(2), wp.z.toFixed(2)],
+      screen: [sp.x.toFixed(2), sp.y.toFixed(2)],
+      camPos: [camera.position.x.toFixed(1), camera.position.y.toFixed(1), camera.position.z.toFixed(1)],
+      orbit: { r: sculpt.orbit.radius.toFixed(1), t: [sculpt.orbit.target.x.toFixed(1), sculpt.orbit.target.y.toFixed(1), sculpt.orbit.target.z.toFixed(1)] },
+    };
+  },
   sculptDispStats: () => sculptDispStats(),
   sculptState: () => ({
     active: sculpt.active, brush: sculpt.brush, detail: sculpt.detail,

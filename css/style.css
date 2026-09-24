@@ -2063,6 +2063,49 @@ html { -webkit-text-size-adjust: 100%; }
   text-align: center; font-size: 11px; color: rgba(207, 238, 255, 0.6);
   padding: 4px 12px 0; text-shadow: 0 1px 6px rgba(0,0,0,0.9);
 }
+/* build 92: Nomad left tool strip — vertical, touch-sized, scrollable */
+.sc-tools {
+  position: absolute; left: calc(8px + env(safe-area-inset-left)); top: 50%;
+  transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 70vh; overflow-y: auto; scrollbar-width: none;
+  padding: 8px 6px; border-radius: 16px;
+  background: rgba(6, 10, 24, 0.72); border: 1px solid rgba(159, 216, 255, 0.22);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.sc-tools::-webkit-scrollbar { display: none; }
+.sc-tools button {
+  width: 56px; height: 56px; border-radius: 14px; flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: transparent; border: 1px solid transparent;
+  color: #cfeeff; font-family: inherit; cursor: pointer; touch-action: manipulation;
+}
+.sc-tools button .g { font-size: 20px; line-height: 1.1; }
+.sc-tools button .t { font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.85; }
+.sc-tools button.sel {
+  background: rgba(159, 216, 255, 0.28); border-color: #9fd8ff; color: #fff;
+  box-shadow: 0 0 12px rgba(159, 216, 255, 0.4);
+}
+.sc-tools button:active { background: rgba(159, 216, 255, 0.18); }
+/* build 92: contextual sub-panel (mask / paint / detail) */
+.sc-sub { display: flex; flex-direction: column; gap: 6px; padding: 4px 14px 2px; align-items: center; }
+.sc-subrow { display: flex; gap: 8px; align-items: center; }
+.sc-sublabel {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #9fd8ff;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.9); min-width: 44px; text-align: right;
+}
+.sc-subrow button {
+  min-width: 52px; min-height: 40px; padding: 6px 12px; border-radius: 10px;
+  background: rgba(6, 10, 24, 0.82); border: 1px solid rgba(159, 216, 255, 0.35);
+  color: #cfeeff; font-family: inherit; font-size: 12px; cursor: pointer; touch-action: manipulation;
+}
+.sc-subrow button.sel { background: rgba(159, 216, 255, 0.3); border-color: #9fd8ff; color: #fff; }
+.sc-palette { display: flex; gap: 8px; }
+.sc-palette button {
+  width: 40px; height: 40px; min-width: 40px; border-radius: 50%; padding: 0;
+  border: 2px solid rgba(255,255,255,0.25);
+}
+.sc-palette button.sel { border-color: #fff; box-shadow: 0 0 10px rgba(255,255,255,0.5); }
 
 /* ---------- side tabs (build 82): jukebox lives on the right edge ---------- */
 #side-tabs {
@@ -2094,6 +2137,7 @@ html { -webkit-text-size-adjust: 100%; }
   transition: transform 0.25s ease-out;
 }
 #juke-panel[style*="display: none"] { transform: translateX(100%); }
+
 /* LIMBOVERSE: verse history (settings panel) */
 .verse-save-row { margin: 6px 0; }
 .verse-save-row button {
@@ -2115,4 +2159,3 @@ html { -webkit-text-size-adjust: 100%; }
   border-radius: 6px; cursor: pointer; flex: 0 0 auto;
 }
 .verse-restore:active { background: rgba(159, 216, 255, 0.25); }
-
