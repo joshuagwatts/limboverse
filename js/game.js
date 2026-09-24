@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=96';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=96';
-import { CouchNet } from './couch.js?v=96';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=96';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=96';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=96';
+import { AudioEngine } from './audio.js?v=97';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=97';
+import { CouchNet } from './couch.js?v=97';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=97';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=97';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=97';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -11164,7 +11164,8 @@ function buildJourneyRays(scene) {
       size: 1.6, vertexColors: true, transparent: true, opacity: 0.75,
       blending: THREE.AdditiveBlending, depthWrite: false }));
     trail.frustumCulled = false;
-    g.add(trail);
+    scene.add(trail); // build 96 fix: world space, NOT a child of the ray group —
+                      // a child would inherit the ray's motion and the trail would never fall behind
     const ray = {
       group: g, wingR, wingL, hit, aura, trail, trPos, trGeo, trTick: 0,
       /* Build 83 flight brain: smooth wander on layered-sine headings.
@@ -11187,6 +11188,13 @@ function buildJourneyRays(scene) {
     g.rotation.order = 'YXZ';
     ray.yaw = ray.heading;
     g.position.set((rnd() - 0.5) * 600, ray.baseY, (rnd() - 0.5) * 600);
+    // seed the trail at the spawn so there's no streak from the origin
+    for (let i = 0; i < 36; i++) {
+      ray.trPos[i * 3] = g.position.x;
+      ray.trPos[i * 3 + 1] = g.position.y;
+      ray.trPos[i * 3 + 2] = g.position.z;
+    }
+    ray.trGeo.attributes.position.needsUpdate = true;
     scene.add(g);
     rays.push(ray);
   }
@@ -11404,7 +11412,8 @@ function journeyBoostCalc(dt) {
   if (peerNear < 30) boost += 0.25 * (1 - peerNear / 30);
   // build 96: drafting a manta ray — tuck in close and match its pace;
   // fly together at the same speed. Your vmax is 16*boost, so the boost
-  // targets the nearest ray's cruise speed.
+  // targets 1.15x the nearest ray's cruise — enough to catch up and stay
+  // on its wing. Full boost inside 25u, fading to 50u (no death spiral).
   let rayNear = Infinity;
   let rayTow = false;
   let nearCruise = 0;
@@ -11416,9 +11425,9 @@ function journeyBoostCalc(dt) {
       if (r.following && d < 25) rayTow = true;
     }
   }
-  if (rayNear < 45 && nearCruise > 0) {
-    const prox = 1 - rayNear / 45;
-    const wantBoost = nearCruise / 16;
+  if (rayNear < 50 && nearCruise > 0) {
+    const prox = Math.max(0, 1 - Math.max(0, rayNear - 25) / 25);
+    const wantBoost = (nearCruise * 1.15) / 16;
     boost = Math.max(boost, 1 + (wantBoost - 1) * prox);
   }
   if (rayTow) boost += 0.15;
