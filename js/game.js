@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=90';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=90';
-import { CouchNet } from './couch.js?v=90';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=90';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=90';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=90';
+import { AudioEngine } from './audio.js?v=91';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=91';
+import { CouchNet } from './couch.js?v=91';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=91';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=91';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=91';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -8278,7 +8278,7 @@ function buildSoundRoom(textures) {
   return {
     key: SOUND_DEF.key, name: SOUND_DEF.name, root: SOUND_DEF.root,
     scene, portals, echoes: [],
-    gallery: galleryFiles, // realm artwork files on the walls — tests check these are real
+    gallery: [], // build 84: gallery replaced by 4 paint walls — no framed pieces now
     spawn: new THREE.Vector3(0, 2, 20), spawnYaw: 0, // face the booth (-Z)
     bound: 'realm',
     anim: {
