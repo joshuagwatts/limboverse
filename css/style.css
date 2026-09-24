@@ -2129,7 +2129,7 @@ html { -webkit-text-size-adjust: 100%; }
 /* build 82: jukebox panel is a right-side drawer, not a bottom sheet */
 #juke-panel {
   left: auto; right: 0; top: 0; bottom: 0;
-  width: min(420px, 88vw); max-height: none;
+  width: min(320px, 78vw); max-height: none; /* build 93: narrow enough to feel like a side drawer on phones */
   border-top: none; border-left: 1px solid rgba(141, 255, 122, 0.35);
   border-radius: 0;
   padding: calc(14px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
@@ -2137,7 +2137,6 @@ html { -webkit-text-size-adjust: 100%; }
   transition: transform 0.25s ease-out;
 }
 #juke-panel[style*="display: none"] { transform: translateX(100%); }
-
 /* LIMBOVERSE: verse history (settings panel) */
 .verse-save-row { margin: 6px 0; }
 .verse-save-row button {
