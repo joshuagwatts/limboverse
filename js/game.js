@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=82';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=82';
-import { CouchNet } from './couch.js?v=82';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=82';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=82';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=82';
+import { AudioEngine } from './audio.js?v=90';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=90';
+import { CouchNet } from './couch.js?v=90';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=90';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=90';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=90';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -189,6 +189,7 @@ const paintEraserBtn  = document.getElementById('paint-eraser');
 const paintUndoBtn    = document.getElementById('paint-undo');
 const paintBlendBtn   = document.getElementById('paint-blend');
 const paintSaveBtn    = document.getElementById('paint-save');
+const paintFreshBtn   = document.getElementById('paint-fresh'); // build 84
 
 /* ---------------- multiplayer state ---------------- */
 
@@ -3683,43 +3684,85 @@ const WALL_W = 1024, WALL_H = 512;
 const WALL_BG = '#0b0b13';
 const WALL_BG_RGB = [11, 11, 19];
 const WALL_AMB_BASE = 0x99aacc; // sound room's default ambient tint
-const wall = {
-  canvas: null, ctx: null, tex: null,
-  strokeCount: 0,      // local + remote strokes this session; >0 means "has ink"
-  strokeTimes: [],     // Date.now() of recent strokes (5s activity window)
-  texDirty: false,
-  answeredReq: new Set(), // wallSyncReq ids we've already answered
-  ts: 0,               // build 26: version time of my wall (last stroke/apply/restore)
-  snapTimer: null,     // build 26: debounce timer for the localStorage snapshot
-  snapKey: 'limbo-wall-v1', // build 26: localStorage key — never renamed, so the mural survives game updates
-  // build 26 (undo): every stroke gets an id (per-session peer prefix +
-  // counter). The wall is a flattened base canvas plus an undoable stroke
-  // log; undo clears the canvas and replays base + remaining log.
-  selfId: Math.random().toString(36).slice(2, 10),
-  strokeSeq: 0,
-  log: [],             // [{id, points, color, size, eraser, byMe}] — undoable strokes
-  base: null, baseCtx: null, // flattened non-undoable mural underneath the log
-  logCap: 500,         // over this, bake the log into the base (pixels kept, history dropped)
-  lastLocalStroke: 0,  // Date.now() of my last local paint input — anti-stomp guard
-  pendingSync: null,   // wallSync JPEG stashed while I was painting; applied once quiet
-};
-wall.canvas = document.createElement('canvas');
-wall.canvas.width = WALL_W;
-wall.canvas.height = WALL_H;
-wall.ctx = wall.canvas.getContext('2d', { willReadFrequently: true });
-wall.ctx.fillStyle = WALL_BG;
-wall.ctx.fillRect(0, 0, WALL_W, WALL_H);
-/* Build 26 (undo): the flattened base under the undoable log. Starts blank
-   like the wall itself; wallRestoreSnapshot / wallApplySnapshot adopt a
-   mural into it. */
-wall.base = document.createElement('canvas');
-wall.base.width = WALL_W;
-wall.base.height = WALL_H;
-wall.baseCtx = wall.base.getContext('2d');
-wall.baseCtx.fillStyle = WALL_BG;
-wall.baseCtx.fillRect(0, 0, WALL_W, WALL_H);
-wall.tex = new THREE.CanvasTexture(wall.canvas);
-wall.tex.colorSpace = THREE.SRGBColorSpace;
+/* Build 84: four separate paint walls (north/east/south/west), one per
+   sound-room wall. Each has its own canvas, stroke log, texture, and sync.
+   `wall` is the ACTIVE wall — all existing wall.* code keeps working;
+   wallUse(id) switches which one is active. */
+const WALL_IDS = ['north', 'east', 'south', 'west'];
+const WALL_LABEL = { north: 'N', east: 'E', south: 'S', west: 'W' };
+function makeWallState(id) {
+  return {
+    id,
+    canvas: null, ctx: null, tex: null,
+    strokeCount: 0,
+    strokeTimes: [],
+    texDirty: false,
+    answeredReq: new Set(),
+    ts: 0,
+    snapTimer: null,
+    snapKey: 'limbo-wall-v1-' + id, // per-wall — murals survive game updates
+    selfId: Math.random().toString(36).slice(2, 10),
+    strokeSeq: 0,
+    log: [],
+    base: null, baseCtx: null,
+    logCap: 500,
+    lastLocalStroke: 0,
+    mesh: null, // build 84: the 3D plane showing this wall's texture
+  };
+}
+const wallStates = {};
+for (const wid of WALL_IDS) wallStates[wid] = makeWallState(wid);
+let wall = wallStates.north; // the active wall — wallUse(id) switches it
+/* Build 84: run fn with a specific wall active, then restore. For sync
+   handlers that land on a non-active wall. */
+function withWall(wid, fn) {
+  const prev = wall;
+  const st = wallStates[wid] || wallStates.north;
+  wall = st;
+  try { return fn(st); }
+  finally { wall = prev; }
+}
+function wallUse(wid) {
+  if (!wallStates[wid] || wall === wallStates[wid]) return;
+  wall = wallStates[wid];
+  if (typeof paint !== 'undefined') paint.wallId = wid;
+  if (typeof paintCtx !== 'undefined' && paintCtx && typeof paint !== 'undefined' && paint.open) {
+    paintCtx.drawImage(wall.canvas, 0, 0, WALL_W, WALL_H);
+  }
+  if (typeof wallPickerSync === 'function') wallPickerSync();
+}
+/* Build 84: restore all four walls from localStorage. */
+function wallRestoreAll() {
+  // Migrate the old single-wall key to north (one-time).
+  try {
+    if (!localStorage.getItem('limbo-wall-v1-north') && localStorage.getItem('limbo-wall-v1')) {
+      localStorage.setItem('limbo-wall-v1-north', localStorage.getItem('limbo-wall-v1'));
+    }
+  } catch (e) {}
+  for (const wid of WALL_IDS) {
+    withWall(wid, () => { wallRestoreSnapshot(); });
+  }
+}
+/* Build 84: init all four wall canvases. */
+for (const wid of WALL_IDS) {
+  const st = wallStates[wid];
+  st.canvas = document.createElement('canvas');
+  st.canvas.width = WALL_W; st.canvas.height = WALL_H;
+  st.ctx = st.canvas.getContext('2d');
+  st.ctx.fillStyle = WALL_BG; st.ctx.fillRect(0, 0, WALL_W, WALL_H);
+  st.base = document.createElement('canvas');
+  st.base.width = WALL_W; st.base.height = WALL_H;
+  st.baseCtx = st.base.getContext('2d');
+  st.baseCtx.fillStyle = WALL_BG; st.baseCtx.fillRect(0, 0, WALL_W, WALL_H);
+}
+wallRestoreAll();
+wall = wallStates.north;
+/* Build 84: one live texture per wall. */
+for (const wid of WALL_IDS) {
+  const st = wallStates[wid];
+  st.tex = new THREE.CanvasTexture(st.canvas);
+  st.tex.colorSpace = THREE.SRGBColorSpace;
+}
 
 function wallMarkDirty() { wall.texDirty = true; }
 
@@ -3741,6 +3784,7 @@ function wallNoteStroke() {
   wallPruneTimes();
   wallMarkDirty();
   wallTouch();
+  wallCheckBudget(); // build 84: spend the budget — archive + fresh at 800
 }
 
 /* Raw polyline draw — no bookkeeping. Callers note the stroke once per
@@ -3891,7 +3935,7 @@ function wallUndoMyLast() {
       wallSaveSnapshot(); // the undone state is the truth now — persist it, don't wait for debounce
       if (typeof paintMirror === 'function' && typeof paint !== 'undefined' && paint.open) paintMirror();
       if (net.enabled && net.sendWallUndo && active && active.key === SOUND_ROOM_KEY) {
-        try { net.sendWallUndo({ id: gone.id }); } catch (err) { /* best effort */ }
+        try { net.sendWallUndo({ w: wall.id, id: gone.id }); } catch (err) { /* best effort */ }
       }
       return gone.id;
     }
@@ -3901,12 +3945,14 @@ function wallUndoMyLast() {
 
 function handleWallUndo(peerId, d) {
   if (!d || typeof d.id !== 'string' || !d.id) return;
-  const i = wall.log.findIndex((e) => e.id === d.id);
-  if (i < 0) return; // unknown id — nothing to do
-  wall.log.splice(i, 1);
-  wallRedraw();
-  wallTouch();
-  if (typeof paintMirror === 'function' && typeof paint !== 'undefined' && paint.open) paintMirror();
+  withWall(d.w, () => {
+    const i = wall.log.findIndex((e) => e.id === d.id);
+    if (i < 0) return; // unknown id — nothing to do
+    wall.log.splice(i, 1);
+    wallRedraw();
+    wallTouch();
+    if (typeof paintMirror === 'function' && typeof paint !== 'undefined' && paint.open && paint.wallId === wall.id) paintMirror();
+  });
 }
 
 /* Strict shape check for incoming strokes — small messages only.
@@ -3928,14 +3974,16 @@ function wallValidStroke(d) {
 
 function handleWallStroke(peerId, d) {
   if (!wallValidStroke(d)) return;
-  // Group flush chunks into one log entry by gesture id; id-less senders
-  // (older builds) get one entry per chunk.
-  const id = (typeof d.id === 'string' && d.id)
-    ? d.id
-    : 'legacy-' + String(peerId || 'x').slice(0, 24) + '-' + (wall.strokeSeq++);
-  wallDrawSeg(d.pts, d.c, d.s, d.b === 1);
-  wallLogAppend(id, d.pts, d.c, d.s, false, d.b === 1);
-  if (paint.open) paintMirror(); // someone's painting while we paint
+  withWall(d.w, () => {
+    // Group flush chunks into one log entry by gesture id; id-less senders
+    // (older builds) get one entry per chunk.
+    const id = (typeof d.id === 'string' && d.id)
+      ? d.id
+      : 'legacy-' + String(peerId || 'x').slice(0, 24) + '-' + (wall.strokeSeq++);
+    wallDrawSeg(d.pts, d.c, d.s, d.b === 1);
+    wallLogAppend(id, d.pts, d.c, d.s, false, d.b === 1);
+    if (paint.open && paint.wallId === wall.id) paintMirror(); // someone's painting while we paint
+  });
 }
 
 /* Late-joiner sync: downscaled JPEG snapshot. */
@@ -4017,37 +4065,41 @@ function wallRestoreSnapshot() {
 
 function handleWallSyncReq(peerId, d) {
   if (!d || typeof d.reqId !== 'string' || !d.reqId) return;
-  if (wall.answeredReq.has(d.reqId)) return; // answer each request once
-  if (wall.strokeCount <= 0) return;         // blank wall: nothing to share
-  // Build 26: only answer when my wall is NEWER than the requester's
-  // (they send their wall.ts along). Peers on older builds send no ts —
-  // treat as 0, i.e. the pre-26 behavior.
-  const theirTs = (typeof d.ts === 'number' && d.ts >= 0) ? d.ts : 0;
-  if (!(wall.ts > theirTs)) return;
-  wall.answeredReq.add(d.reqId);
-  if (wall.answeredReq.size > 40) {
-    const oldest = wall.answeredReq.values().next().value;
-    wall.answeredReq.delete(oldest);
-  }
-  if (!net.enabled || !net.sendWallSync) return;
-  try {
-    const img = wallSnapshot();
-    if (img) net.sendWallSync({ reqId: d.reqId, img });
-  } catch (e) { /* best effort */ }
+  withWall(d.w, () => {
+    if (wall.answeredReq.has(d.reqId)) return; // answer each request once
+    if (wall.strokeCount <= 0) return;         // blank wall: nothing to share
+    // Build 26: only answer when my wall is NEWER than the requester's
+    // (they send their wall.ts along). Peers on older builds send no ts —
+    // treat as 0, i.e. the pre-26 behavior.
+    const theirTs = (typeof d.ts === 'number' && d.ts >= 0) ? d.ts : 0;
+    if (!(wall.ts > theirTs)) return;
+    wall.answeredReq.add(d.reqId);
+    if (wall.answeredReq.size > 40) {
+      const oldest = wall.answeredReq.values().next().value;
+      wall.answeredReq.delete(oldest);
+    }
+    if (!net.enabled || !net.sendWallSync) return;
+    try {
+      const img = wallSnapshot();
+      if (img) net.sendWallSync({ reqId: d.reqId, w: wall.id, img });
+    } catch (e) { /* best effort */ }
+  });
 }
 
 function handleWallSync(peerId, d) {
   if (!d || typeof d.img !== 'string' || !d.img.startsWith('data:image/')) return;
-  // Never stomp a wall that's actively being painted: if my own brush
-  // landed in the last ~3s, stash the mural and merge it once I'm quiet
-  // (drained by wallSaveSnapshot at the debounce quiet point). Otherwise
-  // merge now — their mural becomes the base, my strokes stay on top.
-  if (Date.now() - wall.lastLocalStroke < 3000) {
-    wall.pendingSync = d.img; // latest wins
-    return;
-  }
-  wall.pendingSync = null;
-  wallApplySnapshot(d.img, 'merge');
+  withWall(d.w, () => {
+    // Never stomp a wall that's actively being painted: if my own brush
+    // landed in the last ~3s, stash the mural and merge it once I'm quiet
+    // (drained by wallSaveSnapshot at the debounce quiet point). Otherwise
+    // merge now — their mural becomes the base, my strokes stay on top.
+    if (Date.now() - wall.lastLocalStroke < 3000) {
+      wall.pendingSync = d.img; // latest wins
+      return;
+    }
+    wall.pendingSync = null;
+    wallApplySnapshot(d.img, 'merge');
+  });
 }
 
 /* Build 26: last-writer-wins convergence. A newcomer announces its wall's
@@ -4060,13 +4112,88 @@ function wallValidHello(d) {
 }
 function handleWallHello(peerId, d) {
   if (!wallValidHello(d)) return;
-  if (!(wall.ts > d.ts)) return;    // only the newer wall speaks
-  if (wall.strokeCount <= 0) return; // blank wall: nothing to share
-  if (!net.enabled || !net.sendWallSync) return;
+  withWall(d.w, () => {
+    if (!(wall.ts > d.ts)) return;    // only the newer wall speaks
+    if (wall.strokeCount <= 0) return; // blank wall: nothing to share
+    if (!net.enabled || !net.sendWallSync) return;
+    try {
+      const img = wallSnapshot();
+      if (img) net.sendWallSync({ reqId: 'hello-' + Date.now().toString(36), w: wall.id, img });
+    } catch (e) { /* best effort */ }
+  });
+}
+
+/* Build 84: anti-deterioration. Each wall has a stroke budget; when it's
+   spent, the mural is archived (kept, not lost) and the wall starts fresh.
+   There's also a manual "fresh" button. Peers are told via wallFresh so
+   everyone converges to the blank wall. */
+const WALL_STROKE_BUDGET = 800;
+const WALL_ARCHIVE_MAX = 5;
+function wallArchiveKey(wid) { return 'limbo-wall-archive-v1-' + wid; }
+function wallArchivePush(wid, dataUrl) {
   try {
-    const img = wallSnapshot();
-    if (img) net.sendWallSync({ reqId: 'hello-' + Date.now().toString(36), img });
-  } catch (e) { /* best effort */ }
+    const key = wallArchiveKey(wid);
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) {}
+    if (!Array.isArray(arr)) arr = [];
+    arr.push({ ts: Date.now(), img: dataUrl });
+    while (arr.length > WALL_ARCHIVE_MAX) arr.shift();
+    localStorage.setItem(key, JSON.stringify(arr));
+  } catch (e) { /* best effort — archive is a bonus, not a promise */ }
+}
+function wallClearState(st) {
+  st.ctx.fillStyle = WALL_BG; st.ctx.fillRect(0, 0, WALL_W, WALL_H);
+  st.baseCtx.fillStyle = WALL_BG; st.baseCtx.fillRect(0, 0, WALL_W, WALL_H);
+  st.log.length = 0;
+  st.strokeCount = 0;
+  st.strokeTimes.length = 0;
+  st.pendingSync = null;
+  st.texDirty = true;
+}
+function wallArchiveAndFresh(wid, reason) {
+  const st = wallStates[wid];
+  if (!st) return;
+  // Archive the mural if it has any ink.
+  if (st.strokeCount > 0) {
+    const img = withWall(wid, () => wallSnapshot());
+    if (img) wallArchivePush(wid, img);
+  }
+  withWall(wid, () => {
+    wallClearState(wall);
+    wall.ts = Date.now(); // I'm the newest — peers accept my fresh
+    wallTouch(); // schedule the (now blank) snapshot
+  });
+  // If I'm looking at this wall in paint mode, show the blank.
+  if (paint.wallId === wid && paint.open && paintCtx) {
+    paintCtx.fillStyle = WALL_BG; paintCtx.fillRect(0, 0, WALL_W, WALL_H);
+  }
+  // Tell the room.
+  if (net.enabled && net.sendWallFresh && active && active.key === SOUND_ROOM_KEY) {
+    try { net.sendWallFresh({ w: wid, ts: st.ts, reason: reason || 'manual' }); } catch (e) {}
+  }
+}
+function handleWallFresh(peerId, d) {
+  if (!d || typeof d.w !== 'string' || !wallStates[d.w]) return;
+  if (typeof d.ts !== 'number' || d.ts <= 0) return;
+  withWall(d.w, () => {
+    if (!(d.ts > wall.ts)) return; // only accept a newer fresh
+    // Archive what I had (in case I had something they didn't).
+    if (wall.strokeCount > 0) {
+      const img = wallSnapshot();
+      if (img) wallArchivePush(wall.id, img);
+    }
+    wallClearState(wall);
+    wall.ts = d.ts;
+    if (paint.wallId === wall.id && paint.open && paintCtx) {
+      paintCtx.fillStyle = WALL_BG; paintCtx.fillRect(0, 0, WALL_W, WALL_H);
+    }
+  });
+}
+/* Build 84: called after each stroke lands — spend the budget. */
+function wallCheckBudget() {
+  if (wall.strokeCount >= WALL_STROKE_BUDGET) {
+    wallArchiveAndFresh(wall.id, 'budget');
+  }
 }
 
 /* NOTE: there is deliberately no wall-clear action. The only way paint
@@ -4099,15 +4226,23 @@ const _wallTmpColor = new THREE.Color(); // scratch for the room-reactivity lerp
 /* One room-reactivity sample: read the wall's colors + paint energy and
    retarget the room lights. Called ~1s from the sound room's update(). */
 function wallReactSample(a) {
-  const s = wallSample();
-  if (wall.strokeCount === 0 || s.coverage <= 0.001) {
+  // Build 84: the room drinks from all four walls — blend their hues.
+  let r = 0, g = 0, b = 0, inkWalls = 0, recent = 0, coverage = 0;
+  for (const wid of WALL_IDS) {
+    const s = withWall(wid, () => wallSample());
+    if (wallStates[wid].strokeCount === 0 || s.coverage <= 0.001) continue;
+    r += s.r; g += s.g; b += s.b;
+    recent += s.recent; coverage += s.coverage;
+    inkWalls++;
+  }
+  if (inkWalls === 0) {
     a.wallTarget.set(WALL_AMB_BASE);
   } else {
-    // 55% toward the wall's average hue — never near-black, since the
+    // 55% toward the walls' average hue — never near-black, since the
     // other 45% is always the room's base tint.
-    a.wallTarget.set(WALL_AMB_BASE).lerp(_wallTmpColor.setRGB(s.r, s.g, s.b), 0.55);
+    a.wallTarget.set(WALL_AMB_BASE).lerp(_wallTmpColor.setRGB(r / inkWalls, g / inkWalls, b / inkWalls), 0.55);
   }
-  const energy = Math.min(1, (s.recent / 6) * 0.8 + s.coverage * 1.5);
+  const energy = Math.min(1, (recent / 6) * 0.8 + coverage * 1.5);
   a.wallPulse += (energy - a.wallPulse) * 0.5;
 }
 function wallSample() {
@@ -6116,6 +6251,8 @@ const theatre = {
   seq: 0, // build 80: monotonic state version, bumped on every local play/pause
           // broadcast so a late stateReq answer can't resurrect a paused movie
   peerSeq: {}, // build 80: last applied theatre seq per sender cid
+  // Build 85: per-client screen size (S/M/L) — local only, no sync needed.
+  screenSize: (() => { try { return localStorage.getItem('limbo-theatre-screen') || 'M'; } catch (e) { return 'M'; } })(),
 };
 // build 80: stamp the next local state version on an outgoing broadcast
 function theatreNextSeq() { theatre.seq += 1; return theatre.seq; }
@@ -6180,6 +6317,18 @@ function theatreEnsurePlayer() {
             }
             // build 79: a real PLAYING state clears the autoplay-block flag
             if (ev.data === window.YT.PlayerState.PLAYING) theatreClearPlayBlock();
+            // Build 84: when content (re)starts playing — e.g. after an ad —
+            // check if we've drifted from the synced position and correct.
+            // Ads desync everyone; this pulls us back.
+            if (ev.data === window.YT.PlayerState.PLAYING && theatre.playing && theatre.videoId) {
+              try {
+                const target = theatre.position + (Date.now() - theatre.startedAt) / 1000;
+                const cur = p.getCurrentTime ? p.getCurrentTime() : -99;
+                if (cur >= 0 && Math.abs(cur - target) > 4) {
+                  p.seekTo(Math.max(0, target), true);
+                }
+              } catch (e) {}
+            }
           },
           // build 80: surface player failures — an embedding-disabled or
           // deleted video used to fail silently to a black 3D screen.
@@ -6223,9 +6372,18 @@ function theatreApplyState() {
     try { curId = p.getVideoData().video_id || ''; } catch (e) {}
     if (curId !== theatre.videoId) {
       theatreClearPlayerError(); // build 80: new video, fresh chance
-      p.cueVideoById(theatre.videoId);
-    }
-    if (theatre.playing) {
+      if (theatre.playing) {
+        // Build 84: loadVideoById with startSeconds auto-plays from the
+        // synced position — cueVideoById + seek + play was racy (the seek
+        // fired before the video loaded, so nothing auto-started).
+        const pos = theatre.position + (Date.now() - theatre.startedAt) / 1000;
+        try { p.loadVideoById({ videoId: theatre.videoId, startSeconds: Math.max(0, pos) }); } catch (e) {
+          p.cueVideoById(theatre.videoId);
+        }
+      } else {
+        p.cueVideoById(theatre.videoId);
+      }
+    } else if (theatre.playing) {
       const pos = theatre.position + (Date.now() - theatre.startedAt) / 1000;
       try { p.seekTo(Math.max(0, pos), true); } catch (e) {}
       p.playVideo();
@@ -6236,6 +6394,30 @@ function theatreApplyState() {
     }
   } catch (e) {}
   theatreRender();
+}
+
+/* Build 85: per-client screen size. S=0.7, M=1.0, L=1.4 — scales the mesh
+   and its frame. The DOM projection follows matrixWorld automatically.
+   Local only: your size, your eyes. */
+const THEATRE_SCREEN_SCALES = { S: 0.7, M: 1.0, L: 1.4 };
+const THEATRE_SCREEN_ORDER = ['S', 'M', 'L'];
+function theatreApplyScreenSize() {
+  const s = THEATRE_SCREEN_SCALES[theatre.screenSize] || 1;
+  try {
+    const mesh = active && active.key === THEATRE_ROOM_KEY && active.anim ? active.anim.screenMesh : null;
+    if (mesh) {
+      mesh.scale.setScalar(s);
+      if (mesh.userData.frame) mesh.userData.frame.scale.setScalar(s);
+    }
+  } catch (e) {}
+  const btn = document.getElementById('theatre-sizebtn');
+  if (btn) btn.textContent = '\u26F6 ' + theatre.screenSize;
+}
+function theatreCycleScreenSize() {
+  const i = THEATRE_SCREEN_ORDER.indexOf(theatre.screenSize);
+  theatre.screenSize = THEATRE_SCREEN_ORDER[(i + 1) % THEATRE_SCREEN_ORDER.length];
+  try { localStorage.setItem('limbo-theatre-screen', theatre.screenSize); } catch (e) {}
+  theatreApplyScreenSize();
 }
 
 function theatreRender() {
@@ -6412,23 +6594,43 @@ function theatreClearPlayBlock() {
 }
 
 /* Late joiner asks what's playing — anyone holding a video rebroadcasts
-   the full state as a play (or pause). */
+   the full state as a play (or pause). Build 82: the media host answers
+   immediately; everyone else waits a beat so the host's authoritative
+   state wins and late answers can't fight it. */
 function handleTheatreStateReq(peerId, d) {
   if (!theatre.videoId) return;
   if (d && d.srv != null && String(d.srv) !== nexusServerKey(selectedServer)) return;
-  try {
-    if (theatre.playing) {
-      if (net && net.sendTheatrePlay) net.sendTheatrePlay({
-        videoId: theatre.videoId, position: theatre.position,
-        startedAt: theatre.startedAt, by: theatre.addedBy, seq: theatre.seq,
-      });
-    } else {
-      if (net && net.sendTheatrePause) net.sendTheatrePause({
-        videoId: theatre.videoId, position: theatre.position, by: theatre.addedBy,
-        seq: theatre.seq,
-      });
-    }
-  } catch (e) {}
+  const answer = () => {
+    try {
+      if (theatre.playing) {
+        // Build 84: broadcast the ACTUAL player time, not the calculated
+        // one — if an ad is playing (or was skipped), the calculated
+        // position drifts from reality. Peers re-sync from this.
+        let pos = theatre.position;
+        let startedAt = theatre.startedAt;
+        try {
+          if (theatre.player && theatre.player.getCurrentTime) {
+            pos = theatre.player.getCurrentTime();
+            startedAt = Date.now();
+            // keep our local clock honest too
+            theatre.position = pos;
+            theatre.startedAt = startedAt;
+          }
+        } catch (e) {}
+        if (net && net.sendTheatrePlay) net.sendTheatrePlay({
+          videoId: theatre.videoId, position: pos,
+          startedAt: startedAt, by: theatre.addedBy, seq: theatre.seq,
+        });
+      } else {
+        if (net && net.sendTheatrePause) net.sendTheatrePause({
+          videoId: theatre.videoId, position: theatre.position, by: theatre.addedBy,
+          seq: theatre.seq,
+        });
+      }
+    } catch (e) {}
+  };
+  if (mediaIAmHost()) answer();
+  else setTimeout(answer, 800);
 }
 
 /* Show the theatre panel only in the theatre room; the player (and its
@@ -6440,12 +6642,19 @@ function theatreOnRealm(key) {
   if (inTheatre) {
     theatreEnsurePlayer();
     theatreRender();
-    // build 79: late joiner always asks what's playing — a phone holding a
+    // Build 79: late joiner always asks what's playing — a phone holding a
     // stale videoId would otherwise never catch up. The in-sync skip in
     // handleTheatrePlay keeps the rebroadcast from skipping the room.
-    setTimeout(() => {
+    // Build 82: retry — the data channel might not be up yet on the first
+    // try, and the host (best internet) answers first. Stop once we have
+    // a video; the host's heartbeat keeps us honest after that.
+    let attempts = 0;
+    const ask = () => {
+      attempts++;
       try { if (net && net.sendTheatreStateReq) net.sendTheatreStateReq({}); } catch (e) {}
-    }, 1500);
+      if (attempts < 3 && !theatre.videoId) setTimeout(ask, 2500);
+    };
+    setTimeout(ask, 1500);
   }
   theatreUpdateJamMonitor();
 }
@@ -6472,6 +6681,124 @@ function theatreApplyVolume() {
       theatre.player.setVolume(theatre.muted ? 0 : Math.round(theatre.volume * 100));
     }
   } catch (e) {}
+}
+
+/* ---------------- media host (build 82) ----------------
+   Best internet wins. Every peer measures RTT to the peers it can see,
+   broadcasts its average, and everyone independently elects the peer with
+   the lowest average as the media host. The host is the authoritative
+   source for theatre state: it answers late-joiner state requests first
+   and heartbeats the canonical state. If the host leaves, the next-best
+   takes over — the space heals itself from whoever's left. Combined
+   connectivity creating the space. */
+const MEDIA_PING_MS = 5000;
+const MEDIA_SCORE_MS = 5000;
+const MEDIA_HOST_SYNC_MS = 10000;
+const MEDIA_SCORE_TTL_MS = 20000;
+const mediaHost = {
+  cid: null,          // elected host's cid; my own cid if I win
+  score: Infinity,
+  name: '',
+  rtts: new Map(),    // cid -> EMA RTT in ms
+  scores: new Map(),   // cid -> {score, name, lastSeen}
+  pingTimer: 0,
+  scoreTimer: 0,
+  syncTimer: 0,
+};
+function mediaMyCid() { try { return (net && net.clientId) || ''; } catch (e) { return ''; } }
+function mediaMyScore() {
+  if (mediaHost.rtts.size === 0) return Infinity;
+  let sum = 0;
+  for (const rtt of mediaHost.rtts.values()) sum += rtt;
+  return sum / mediaHost.rtts.size;
+}
+function mediaIAmHost() { return mediaHost.cid !== null && mediaHost.cid === mediaMyCid(); }
+function mediaRecomputeHost() {
+  const now = Date.now();
+  for (const [cid, rec] of mediaHost.scores) {
+    if (now - rec.lastSeen > MEDIA_SCORE_TTL_MS) mediaHost.scores.delete(cid);
+  }
+  const myCid = mediaMyCid();
+  const myScore = mediaMyScore();
+  let bestCid = myCid || null;
+  let bestScore = myScore;
+  let bestName = (typeof myName === 'string' && myName) || 'drifter';
+  for (const [cid, rec] of mediaHost.scores) {
+    if (typeof rec.score !== 'number') continue;
+    if (rec.score < bestScore || (rec.score === bestScore && cid < (bestCid || ''))) {
+      bestScore = rec.score;
+      bestCid = cid;
+      bestName = rec.name || 'a drifter';
+    }
+  }
+  const prev = mediaHost.cid;
+  mediaHost.cid = bestCid;
+  mediaHost.score = bestScore;
+  mediaHost.name = bestName;
+  if (prev !== bestCid) mediaHostUpdateSyncTimer();
+}
+function mediaHostUpdateSyncTimer() {
+  if (mediaHost.syncTimer) { clearInterval(mediaHost.syncTimer); mediaHost.syncTimer = 0; }
+  if (mediaIAmHost() && net && net.enabled && net.sendMediaHostSync) {
+    mediaBroadcastHostState(); // announce immediately on winning
+    mediaHost.syncTimer = setInterval(() => { try { mediaBroadcastHostState(); } catch (e) {} }, MEDIA_HOST_SYNC_MS);
+  }
+}
+function mediaBroadcastHostState() {
+  if (!mediaIAmHost() || !net || !net.sendMediaHostSync) return;
+  const t = theatre.videoId ? {
+    videoId: theatre.videoId, title: theatre.title,
+    playing: theatre.playing, position: theatre.position,
+    startedAt: theatre.startedAt, by: theatre.addedBy, seq: theatre.seq,
+  } : null;
+  try {
+    net.sendMediaHostSync({ theatre: t, hostName: (typeof myName === 'string' && myName) || 'drifter', at: Date.now() });
+  } catch (e) {}
+}
+function handleMediaHostSync(peerId, d) {
+  if (mediaIAmHost()) return;
+  if (!mediaHost.cid || peerId !== mediaHost.cid) return; // only the elected host is authoritative
+  if (!d || !d.theatre || typeof d.theatre.videoId !== 'string' || !d.theatre.videoId) return;
+  const t = d.theatre;
+  // Reuse the play/pause handlers — seq guard + in-sync skip come free.
+  if (t.playing) {
+    handleTheatrePlay(peerId, { videoId: t.videoId, position: t.position, startedAt: t.startedAt, by: t.by, seq: t.seq });
+  } else {
+    handleTheatrePause(peerId, { videoId: t.videoId, position: t.position, by: t.by, seq: t.seq });
+  }
+}
+function mediaPingTick() {
+  if (!net || !net.enabled || !net.sendMediaPing) return;
+  try { net.sendMediaPing({ ts: Date.now(), from: mediaMyCid() }); } catch (e) {}
+}
+function handleMediaPing(peerId, d) {
+  if (!d || typeof d.ts !== 'number') return;
+  try { if (net && net.sendMediaPong) net.sendMediaPong({ ts: d.ts, from: mediaMyCid(), to: d.from }); } catch (e) {}
+}
+function handleMediaPong(peerId, d) {
+  if (!d || typeof d.ts !== 'number' || d.to !== mediaMyCid()) return;
+  const rtt = Date.now() - d.ts;
+  if (!(rtt >= 0) || rtt > 10000) return;
+  const prev = mediaHost.rtts.get(peerId);
+  mediaHost.rtts.set(peerId, prev == null ? rtt : prev * 0.7 + rtt * 0.3);
+  mediaRecomputeHost();
+}
+function mediaScoreTick() {
+  if (!net || !net.enabled || !net.sendMediaScore) return;
+  try { net.sendMediaScore({ score: mediaMyScore(), name: (typeof myName === 'string' && myName) || 'drifter' }); } catch (e) {}
+  mediaRecomputeHost();
+}
+function handleMediaScore(peerId, d) {
+  if (!d || typeof d.score !== 'number') return;
+  mediaHost.scores.set(peerId, { score: d.score, name: d.name || 'a drifter', lastSeen: Date.now() });
+  mediaRecomputeHost();
+}
+function mediaHostStart() {
+  if (mediaHost.pingTimer) return;
+  mediaPingTick(); mediaScoreTick();
+  mediaHost.pingTimer = setInterval(() => { try { mediaPingTick(); } catch (e) {} }, MEDIA_PING_MS);
+  mediaHost.scoreTimer = setInterval(() => { try { mediaScoreTick(); } catch (e) {} }, MEDIA_SCORE_MS);
+  mediaRecomputeHost();
 }
 
 /* Build 77: living-room mute for the video room. Every mute button with
@@ -6560,6 +6887,67 @@ function theatreScreenTick() {
   // CSS matrix3d is column-major: the 2D homography sits in the x/y columns.
   theatreScreen3dEl.style.transform =
     `matrix3d(${h[0]},${h[3]},0,${h[6]},${h[1]},${h[4]},0,${h[7]},0,0,1,0,${h[2]},${h[5]},0,1)`;
+  // Build 82: the DOM overlay can't depth-test against WebGL. If the wisp
+  // (orb) is in front of the screen, punch a hole in the overlay via a
+  // radial mask so the orb renders in front like it should.
+  theatreScreenOcclusion(dst);
+}
+
+/* Build 82: wisp-vs-screen occlusion. Returns the wisp's screen-space
+   circle if it's in front of (and overlapping) the screen quad. */
+const _tsW = { x: 0, y: 0, z: 0 };
+function theatreWispScreen() {
+  try {
+    if (!wisp || !camera) return null;
+    _tsV.copy(wisp.position).project(camera);
+    if (_tsV.z > 1) return null; // behind camera
+    const wx = (_tsV.x * 0.5 + 0.5) * window.innerWidth;
+    const wy = (-_tsV.y * 0.5 + 0.5) * window.innerHeight;
+    // Screen-space radius: wisp core is ~0.32 world units + glow.
+    const dist = camera.position.distanceTo(wisp.position);
+    if (dist <= 0.1) return null;
+    const worldR = 0.9; // orb + glow
+    const fovRad = (camera.fov || 60) * Math.PI / 180;
+    const pxPerUnit = (window.innerHeight / 2) / (Math.tan(fovRad / 2) * dist);
+    const r = Math.max(24, Math.min(220, worldR * pxPerUnit));
+    return { x: wx, y: wy, r: r, depth: _tsV.z };
+  } catch (e) { return null; }
+}
+function theatreScreenOcclusion(dst) {
+  try {
+    const ws = theatreWispScreen();
+    if (!ws) {
+      theatreScreen3dEl.style.webkitMaskImage = 'none';
+      theatreScreen3dEl.style.maskImage = 'none';
+      return;
+    }
+    // Is the wisp over the screen quad? (bounding-box check on the 4 corners)
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [cx, cy] of dst) {
+      if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+      if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+    }
+    const over = ws.x > minX - ws.r && ws.x < maxX + ws.r && ws.y > minY - ws.r && ws.y < maxY + ws.r;
+    // Is the wisp in front of the screen? Compare depth at screen center.
+    const mesh = active && active.key === THEATRE_ROOM_KEY && active.anim ? active.anim.screenMesh : null;
+    let inFront = false;
+    if (mesh) {
+      mesh.getWorldPosition(_tsP);
+      _tsP.project(camera);
+      inFront = ws.depth < _tsP.z - 0.002;
+    }
+    if (over && inFront) {
+      // Punch a soft-edged hole so the orb shows through.
+      const m = `radial-gradient(circle ${ws.r}px at ${ws.x}px ${ws.y}px, transparent ${ws.r * 0.7}px, black ${ws.r}px)`;
+      theatreScreen3dEl.style.webkitMaskImage = m;
+      theatreScreen3dEl.style.maskImage = m;
+    } else {
+      theatreScreen3dEl.style.webkitMaskImage = 'none';
+      theatreScreen3dEl.style.maskImage = 'none';
+    }
+  } catch (e) {
+    try { theatreScreen3dEl.style.webkitMaskImage = 'none'; theatreScreen3dEl.style.maskImage = 'none'; } catch (e2) {}
+  }
 }
 
 // wire the theatre UI
@@ -6580,6 +6968,9 @@ function theatreScreenTick() {
   if (theatrePlayPauseEl) theatrePlayPauseEl.addEventListener('click', theatreTogglePlay);
   const close = document.getElementById('theatre-close');
   if (close) close.addEventListener('click', () => { if (theatrePanel) theatrePanel.style.display = 'none'; });
+  // Build 85: screen-size cycle button — your size, your eyes.
+  const sizeBtn = document.getElementById('theatre-sizebtn');
+  if (sizeBtn) sizeBtn.addEventListener('click', theatreCycleScreenSize);
   const jvol = document.getElementById('jam-theatre-vol');
   if (jvol) jvol.addEventListener('input', () => {
     if (theatre.muted && +jvol.value > 0) theatreSetMuted(false); // dragging volume unmutes
@@ -6599,19 +6990,22 @@ function theatreScreenTick() {
    panel. The button carries now-playing + how many are in line. */
 function jukeBadge() {
   if (!jukeBtn) return;
-  jukeBtn.innerHTML = '';
-  const add = (html, text) => {
-    if (jukeBtn.childNodes.length) jukeBtn.appendChild(document.createTextNode(' · '));
-    const s = document.createElement('span');
-    if (html) s.innerHTML = html; else s.textContent = text;
-    jukeBtn.appendChild(s);
-  };
-  add('&#127925; jukebox');
+  // Build 82: the button is a side tab (emoji + label spans). Update the
+  // label in place so the tab structure survives.
+  let label = jukeBtn.querySelector('.side-tab-label');
+  if (!label) { jukeBtn.innerHTML = ''; label = document.createElement('span'); label.className = 'side-tab-label'; jukeBtn.appendChild(label); }
+  const parts = ['jukebox'];
   if (juke.now && !juke.now.stopped) {
     const t = (juke.now.title || 'untitled').toString().slice(0, 18);
-    add(null, `now: ${t}`);
+    parts.push(`now: ${t}`);
   }
-  if (juke.queue.length) add(null, `${juke.queue.length} in line`);
+  if (juke.queue.length) parts.push(`${juke.queue.length} in line`);
+  label.textContent = parts.join(' · ');
+  if (!jukeBtn.querySelector('.side-tab-emoji')) {
+    const e = document.createElement('span');
+    e.className = 'side-tab-emoji'; e.innerHTML = '&#127925;';
+    jukeBtn.insertBefore(e, label);
+  }
 }
 
 function jukeSetVolume(v) {
@@ -6776,6 +7170,7 @@ const PAINT_COLORS = [
 ];
 const paint = {
   open: false,
+  wallId: 'north', // build 84: which of the four walls is being painted
   color: '#7ae0ff',
   blend: false,      // build 28: blend brush — smudge the canvas, don't lay color
   lastColor: '#7ae0ff',
@@ -6883,6 +7278,7 @@ function paintFlush() {
   if (net.enabled && net.sendWallStroke && active && active.key === SOUND_ROOM_KEY) {
     try {
       net.sendWallStroke({
+        w: wall.id, // build 84: which of the four walls
         id: paint.gesture ? paint.gesture.id : undefined, // groups this gesture's chunks for peers
         n: myName,
         c: paint.color,
@@ -6913,11 +7309,33 @@ function setPaintOpen(open) {
   chatFocused = paint.open; // reuse the chat guard: keys never fly the wisp mid-paint
   if (paint.open) {
     paintBuildPalette();
+    wallPickerSync();
     if (paintCtx) paintCtx.drawImage(wall.canvas, 0, 0, WALL_W, WALL_H);
   } else {
     paintEndStroke();
   }
 }
+
+/* Build 84: wall picker — highlight the active wall's tab. */
+function wallPickerSync() {
+  try {
+    const btns = document.querySelectorAll('#wall-picker .wall-pick');
+    for (const b of btns) {
+      b.classList.toggle('active', b.dataset.wall === paint.wallId);
+    }
+  } catch (e) {}
+}
+(function wallPickerWire() {
+  try {
+    const btns = document.querySelectorAll('#wall-picker .wall-pick');
+    for (const b of btns) {
+      b.addEventListener('click', () => {
+        wallUse(b.dataset.wall);
+        b.blur();
+      });
+    }
+  } catch (e) {}
+})();
 
 if (paintCanvas) {
   paintCanvas.addEventListener('pointerdown', (e) => {
@@ -7016,6 +7434,14 @@ function wallExportPng() {
   } catch (e) { return false; }
 }
 if (paintSaveBtn) paintSaveBtn.addEventListener('click', () => { wallExportPng(); paintSaveBtn.blur(); });
+if (paintFreshBtn) paintFreshBtn.addEventListener('click', () => {
+  // Build 84: archive this mural and start the wall fresh. Confirm — this
+  // clears the wall for everyone in the room.
+  if (confirm('Archive this mural and start "' + paint.wallId + '" fresh? The old one is kept in the archive.')) {
+    wallArchiveAndFresh(paint.wallId, 'manual');
+  }
+  paintFreshBtn.blur();
+});
 /* Undo: pops MY most recent stroke (eraser strokes included) and tells
    the room, so peers drop it from their logs and replay too. */
 if (paintUndoBtn) paintUndoBtn.addEventListener('click', () => {
@@ -7747,35 +8173,32 @@ function buildSoundRoom(textures) {
   }
 
   // Gallery: the realm artworks, framed, one per wall — except the north
-  // wall, where the community wall lives now (build 19 removed the
-  // REALM_DEFS[0] piece that used to hang behind it).
-  const galleryFiles = [];
-  const frameDefs = [
-    { def: REALM_DEFS[1], p: [33.7, 8, 0], r: -Math.PI / 2 },
-    { def: REALM_DEFS[2], p: [0, 8, 33.7], r: Math.PI },
-    { def: REALM_DEFS[3], p: [-33.7, 8, 0], r: Math.PI / 2 },
+  // Build 84: four paint walls, one per wall, all the same size (32x16).
+  // The north wall keeps its existing monumental canvas (built below);
+  // east/south/west get matching ones here, replacing the gallery frames.
+  const paintWallDefs = [
+    { id: 'east',  p: [33.7, 9, 0],   r: -Math.PI / 2 },
+    { id: 'south', p: [0, 9, 33.7],   r: Math.PI },
+    { id: 'west',  p: [-33.7, 9, 0],  r: Math.PI / 2 },
   ];
-  for (const f of frameDefs) {
-    const tex = textures[f.def.key];
-    const img = tex && tex.image ? tex.image : null;
-    const aspect = img ? img.width / img.height : 1;
-    const AW = 15, AH = Math.min(AW / aspect, 11);
+  for (const f of paintWallDefs) {
+    const st = wallStates[f.id];
     const frame = new THREE.Group();
-    frame.name = 'gallery-' + f.def.key; // test hook: build 19 removed gallery-realm1
+    frame.name = 'paint-wall-' + f.id;
     const back = new THREE.Mesh(
-      new THREE.PlaneGeometry(AW + 1.2, AH + 1.2),
-      new THREE.MeshStandardMaterial({ color: f.def.accent, emissive: f.def.accent, emissiveIntensity: 0.25, roughness: 0.4, metalness: 0.6 })
+      new THREE.PlaneGeometry(34.4, 17.4),
+      new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.35, roughness: 0.4, metalness: 0.6 })
     );
-    const art = new THREE.Mesh(
-      new THREE.PlaneGeometry(AW, AH),
-      new THREE.MeshBasicMaterial({ map: tex })
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(32, 16),
+      new THREE.MeshBasicMaterial({ map: st.tex })
     );
-    art.position.z = 0.08;
-    frame.add(back, art);
+    mesh.position.z = 0.08;
+    frame.add(back, mesh);
     frame.position.set(...f.p);
     frame.rotation.y = f.r;
     scene.add(frame);
-    galleryFiles.push(f.def.file);
+    st.mesh = mesh;
   }
 
   // DJ booth: platform, two decks, mixer, amber glow.
@@ -7825,23 +8248,25 @@ function buildSoundRoom(textures) {
   stageGroup.position.set(0, 0, -10);
   scene.add(stageGroup);
 
-  // Community wall (build 18; doubled to 32x16 in build 19 after the
-  // north-wall gallery piece was removed): a monumental shared paint
-  // canvas on the north wall behind the booth. MeshBasicMaterial so the
-  // art reads in the dark; the CanvasTexture updates live as strokes land.
+  // Community wall (build 18; doubled to 32x16 in build 19; build 84: the
+  // north of four): a monumental shared paint canvas on the north wall
+  // behind the booth. MeshBasicMaterial so the art reads in the dark;
+  // the CanvasTexture updates live as strokes land.
   const wallFrame = new THREE.Group();
+  wallFrame.name = 'paint-wall-north';
   const wallBack = new THREE.Mesh(
     new THREE.PlaneGeometry(34.4, 17.4),
     new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.35, roughness: 0.4, metalness: 0.6 })
   );
   const wallMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(32, 16),
-    new THREE.MeshBasicMaterial({ map: wall.tex })
+    new THREE.MeshBasicMaterial({ map: wallStates.north.tex })
   );
   wallMesh.position.z = 0.08;
   wallFrame.add(wallBack, wallMesh);
   wallFrame.position.set(0, 9, -33.4);
   scene.add(wallFrame);
+  wallStates.north.mesh = wallMesh;
 
   // Return portal to the Nexus.
   const { group, ring } = makePortal(makeSoundTexture(), accent, 'RETURN', 1.7, 0.14);
@@ -8099,6 +8524,8 @@ function buildTheatre() {
   screenMesh.position.set(0, screenY, screenZ);
   screenMesh.name = 'theatre-screen';
   scene.add(screenMesh);
+  // Build 85: keep the frame so the screen-size control can scale both.
+  screenMesh.userData.frame = frame;
 
   // Seat rows — simple dark boxes with a hint of red.
   const seatMat = new THREE.MeshStandardMaterial({ color: 0x1a0d10, roughness: 0.9 });
@@ -9540,7 +9967,6 @@ function handleFohReq(peerId, d) {
     try { net.sendFohSync({ foh: { ...foh } }); } catch (e) {}
   }
 }
-
 /* ============================================================
    VERSE SNAPSHOTS — the verse versions itself.
    Auto-saves the shared creative state every 5 min (when changed).
@@ -10314,11 +10740,12 @@ function buildJourneyGems(scene) {
   journey.gems = gems;
 }
 
-/* ---------------- manta rays (build 49) ----------------
-   Seven rays glide the open field on lazy seeded circles — the same
-   circles on every phone, so multiplayer shares one sky. Tap a ray when
-   you're close and it leaves its circle to follow you; tap it again (or
-   tap another ray) to let it go. Never automatic — the call is yours. */
+/* ---------------- manta rays (build 49, flight reworked build 83) ----------------
+   Seven rays glide the open field at wisp height — the same sky on every
+   phone, so multiplayer shares it. Wander is layered-sine headings (seeded,
+   deterministic): endless smooth peaceful curves, never a hard turn.
+   Tap a ray when you're close and it leaves its wander to follow you;
+   tap it again (or tap another ray) to let it go. Never automatic. */
 const J_RAYS_N = 7;
 const J_RAY_TAP_RANGE = 34; // how close you must be to call a ray
 const _raycaster = new THREE.Raycaster();
@@ -10326,11 +10753,29 @@ const _raySlot = new THREE.Vector3();
 const _rayRight = new THREE.Vector3();
 const _rayUp = new THREE.Vector3(0, 1, 0);
 
+/* Build 83: shared radial glow texture for the ray auras. */
+let _rayGlowTex = null;
+function rayGlowTexture() {
+  if (_rayGlowTex) return _rayGlowTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, 'rgba(150,205,255,0.55)');
+  g.addColorStop(0.4, 'rgba(110,170,255,0.20)');
+  g.addColorStop(1, 'rgba(80,140,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  _rayGlowTex = new THREE.CanvasTexture(c);
+  return _rayGlowTex;
+}
+
 function buildJourneyRays(scene) {
   const rnd = mulberry32(4901);
+  /* Build 83: glowy and majestic — lit from within, not just shaded. */
   const mat = new THREE.MeshStandardMaterial({
-    color: 0x9db8dd, roughness: 0.55, metalness: 0.15,
-    emissive: 0x14263f, emissiveIntensity: 0.5,
+    color: 0x8fb4e8, roughness: 0.35, metalness: 0.25,
+    emissive: 0x2a6ab8, emissiveIntensity: 0.85,
     flatShading: true, side: THREE.DoubleSide,
   });
 
@@ -10405,43 +10850,50 @@ function buildJourneyRays(scene) {
     const hit = new THREE.Mesh(
       new THREE.SphereGeometry(9, 8, 6),
       new THREE.MeshBasicMaterial({ visible: false }));
+    /* Build 83: aura sprite — a soft additive halo so each ray glows
+       against the sky. Pulsed gently in updateJourneyRays. */
+    const aura = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: rayGlowTexture(), transparent: true, opacity: 0.45,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    aura.scale.setScalar(30);
     g.add(new THREE.Mesh(bodyGeo, mat), wingR, wingL,
       new THREE.Mesh(tailGeo, mat), new THREE.Mesh(dorsalGeo, mat),
-      cephL, cephR, hit);
+      cephL, cephR, hit, aura);
     g.scale.setScalar(1.1 + rnd() * 0.7);
     const ray = {
-      group: g, wingR, wingL, hit,
-      // flight brain: steered velocity toward a wandering sky target
-      vel: new THREE.Vector3((rnd() - 0.5) * 30, (rnd() - 0.5) * 6, (rnd() - 0.5) * 30),
-      tgt: new THREE.Vector3(),
-      yaw: rnd() * Math.PI * 2,
-      cruise: 26 + rnd() * 16,
+      group: g, wingR, wingL, hit, aura,
+      /* Build 83 flight brain: smooth wander on layered-sine headings.
+         heading drifts on slow seeded sines — endless curving, no targets,
+         no snaps. baseY sits in the wisp's band so you can fly alongside. */
+      heading: rnd() * Math.PI * 2,
+      yaw: 0,
+      cruise: 22 + rnd() * 10,
+      baseY: 12 + rnd() * 33, // 12–45 (±7 → 5–52): inside the wisp's Journey band (2.5–60)
+      tp1: rnd() * Math.PI * 2, // turn phases (seeded → same sky, every phone)
+      tp2: rnd() * Math.PI * 2,
+      yp: rnd() * Math.PI * 2,  // altitude phase
+      bank: 0,
       flap: rnd() * Math.PI * 2,
       flapSpd: 2,
-      rollT: 0, rollCd: 8 + rnd() * 24, rollDir: rnd() < 0.5 ? 1 : -1,
       rndState: rnd,
       following: false,
     };
     hit.userData.ray = ray;
     g.rotation.order = 'YXZ';
-    g.position.set((rnd() - 0.5) * 700, 60 + rnd() * 120, (rnd() - 0.5) * 700);
-    journeyNewRayTarget(ray);
+    ray.yaw = ray.heading;
+    g.position.set((rnd() - 0.5) * 600, ray.baseY, (rnd() - 0.5) * 600);
     scene.add(g);
     rays.push(ray);
   }
   journey.rays = rays;
 }
 
-/* A ray's next sky target — wide open field, real altitude. */
-function journeyNewRayTarget(ray) {
-  const r = ray.rndState || Math.random;
-  ray.tgt.set((r() - 0.5) * 620, 55 + r() * 140, (r() - 0.5) * 620);
-}
-
 function releaseRay(ray) {
   ray.following = false;
-  // resume the wander from right here — pick a fresh target ahead of it
-  journeyNewRayTarget(ray);
+  // resume the wander from right here — keep the current heading so
+  // there's no snap, the sines take over from this direction
+  ray.heading = ray.yaw;
 }
 
 function updateJourneyRays(dt, t) {
@@ -10462,56 +10914,65 @@ function updateJourneyRays(dt, t) {
       else _jTmpA.copy(myFwd);
       hx = _jTmpA.x; hy = _jTmpA.y; hz = _jTmpA.z;
       spd = 30;
+      ray.bank += (0 - ray.bank) * k(3); // level when following
     } else {
-      // steering brain: chase the sky target, bank into every turn
-      _jTmpA.copy(ray.tgt).sub(g.position);
-      const dist = _jTmpA.length();
-      if (dist < 60) journeyNewRayTarget(ray);
-      else _jTmpA.multiplyScalar(1 / dist);
-      const cruise = ray.cruise * (ray.rollT > 0 ? 1.25 : 1);
-      _jTmpB.copy(_jTmpA).multiplyScalar(cruise);
-      ray.vel.lerp(_jTmpB, k(1.5));
-      // keep them out of the dirt and under the sky's lid
-      if (g.position.y < 25) ray.vel.y += 40 * dt;
-      if (g.position.y > 220) ray.vel.y -= 40 * dt;
-      g.position.addScaledVector(ray.vel, dt);
-      const vlen = ray.vel.length() || 1;
-      hx = ray.vel.x / vlen; hy = ray.vel.y / vlen; hz = ray.vel.z / vlen;
-      spd = vlen;
+      /* Build 83: peaceful wander. The heading breathes on two slow
+         seeded sines — the ray carves endless smooth curves. A soft
+         pull toward center only when it drifts past the field edge. */
+      const turn = 0.16 * Math.sin(0.10 * t + ray.tp1)
+                 + 0.07 * Math.sin(0.043 * t + ray.tp2);
+      let centerPull = 0;
+      const rad = Math.hypot(g.position.x, g.position.z);
+      if (rad > 300) {
+        const toCenter = Math.atan2(-g.position.x, -g.position.z);
+        let d = toCenter - ray.heading;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        centerPull = Math.max(-0.3, Math.min(0.3, d * 0.25));
+      }
+      const turnRate = turn + centerPull;
+      ray.heading += turnRate * dt;
+      // altitude breathes gently around baseY — stays in the wisp's band
+      const wantY = ray.baseY + 7 * Math.sin(0.08 * t + ray.yp);
+      const vy = (wantY - g.position.y) * 0.5;
+      hx = Math.sin(ray.heading); hz = Math.cos(ray.heading);
+      hy = Math.max(-0.25, Math.min(0.25, vy / ray.cruise));
+      g.position.x += hx * ray.cruise * dt;
+      g.position.z += hz * ray.cruise * dt;
+      g.position.y += vy * dt;
+      if (g.position.y < 6) g.position.y = 6;
+      if (g.position.y > 70) g.position.y = 70;
+      spd = ray.cruise;
+      // bank softly into the turn — no snaps, no barrel rolls
+      const wantBank = Math.max(-0.5, Math.min(0.5, -turnRate * 1.8));
+      ray.bank += (wantBank - ray.bank) * k(3);
     }
-    // face the heading: yaw toward it, pitch with the climb, bank the turn
+    // face the heading: yaw eases toward it, pitch with the climb
     const wantYaw = Math.atan2(hx, hz);
     let dy = wantYaw - ray.yaw;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
-    const turn = Math.max(-1, Math.min(1, dy * 2.4));
-    ray.yaw += dy * k(4);
+    ray.yaw += dy * k(6);
     const wantPitch = Math.max(-0.6, Math.min(0.6, -Math.asin(
       Math.max(-1, Math.min(1, hy))) * 0.9));
-    const wantBank = Math.max(-0.65, Math.min(0.65, -turn * 0.6));
-    // the flourish: every so often a ray rolls clean through a barrel roll
-    ray.rollCd -= dt;
-    if (ray.rollCd <= 0 && !ray.following && ray.rollT <= 0) {
-      ray.rollT = 1.5; ray.rollCd = 14 + (ray.rndState || Math.random)() * 26;
-    }
-    let roll = 0;
-    if (ray.rollT > 0) {
-      ray.rollT -= dt;
-      roll = (1 - Math.max(0, ray.rollT) / 1.5) * Math.PI * 2 * ray.rollDir;
-    }
     g.rotation.y = ray.yaw;
     g.rotation.x += (wantPitch - g.rotation.x) * k(3);
-    g.rotation.z += (wantBank + roll - g.rotation.z) * k(5);
-    // wings: beat hard on the climb, hold flat on the dive — gliding birds
+    g.rotation.z += (ray.bank - g.rotation.z) * k(4);
+    // wings: beat on the climb, hold near-flat on the glide.
+    // Build 83 fix: wingL is mirrored (scale.x = -1), so it needs the
+    // NEGATED angle — same sign was seesawing the wings (the teeter).
     const climbing = hy > 0.08 && !ray.following;
-    const wantFlapSpd = ray.following ? 3.4 : climbing ? 6.5 : 1.4;
+    const wantFlapSpd = ray.following ? 3.4 : climbing ? 5.5 : 1.6;
     ray.flapSpd += (wantFlapSpd - ray.flapSpd) * k(2.5);
     ray.flap += ray.flapSpd * dt;
-    const amp = ray.following ? 0.4 : climbing ? 0.5 : 0.1;
+    const amp = ray.following ? 0.4 : climbing ? 0.45 : 0.12;
     const flap = Math.sin(ray.flap) * amp;
-    // wingL is mirrored (scale.x = -1), so the same sign lifts both tips
     ray.wingR.rotation.z = flap;
-    ray.wingL.rotation.z = flap;
+    ray.wingL.rotation.z = -flap;
+    // aura breathes with the flap
+    if (ray.aura) {
+      ray.aura.material.opacity = 0.40 + 0.10 * Math.sin(t * 1.3 + ray.yp);
+    }
   }
 }
 
@@ -11833,6 +12294,9 @@ function goTo(key) {
     // Build 22: the ambient aura ducks out in the sound room (jam,
     // jukebox and metronome all ride the game master and are unaffected).
     audio.setAuraDucked(key === SOUND_ROOM_KEY);
+    // Build 85: restore the player's saved theatre screen size on entry.
+    if (key === THEATRE_ROOM_KEY) { try { theatreApplyScreenSize(); } catch (e) {} }
+    audio.setAuraDucked(key === SOUND_ROOM_KEY);
     showTitleCard(active.name);
     renderRoomChrome(); // show/hide each room's buttons for this room
     try { theatreOnRealm(key); } catch (e) {} // build 75: theatre panel only in the theatre
@@ -11863,18 +12327,21 @@ function goTo(key) {
       }, 2000);
     }
     if (key !== WORKSHOP_ROOM_KEY && sculpt.active) sculptExit(); // build 68: don't sculpt the void
-    // Community wall (build 18): late joiner asks the room for the current
-    // canvas. Delayed so the data channel has a moment to connect; peers
-    // with ink answer once per reqId (see handleWallSyncReq).
+    // Community wall (build 18; build 84: four walls): late joiner asks the
+    // room for the current canvases. Delayed so the data channel has a
+    // moment to connect; peers with ink answer once per reqId.
     if (musicRoom && net.enabled && (net.sendWallSyncReq || net.sendJukeStateReq)) {
       const reqId = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
       setTimeout(() => {
         if (active && active.key === SOUND_ROOM_KEY) {
-          // Build 26: announce my wall's version time; only peers with a
-          // NEWER wall answer (wallHello + the ts-gated wallSyncReq below).
-          if (net.sendWallHello) { try { net.sendWallHello({ ts: wall.ts }); } catch (e) {} }
-          if (net.sendWallSyncReq) {
-            try { net.sendWallSyncReq({ reqId, ts: wall.ts }); } catch (e) { /* best effort */ }
+          // Build 26: announce my walls' version times; only peers with a
+          // NEWER wall answer. Build 84: one hello/req per wall.
+          for (const wid of WALL_IDS) {
+            const st = wallStates[wid];
+            if (net.sendWallHello) { try { net.sendWallHello({ w: wid, ts: st.ts }); } catch (e) {} }
+            if (net.sendWallSyncReq) {
+              try { net.sendWallSyncReq({ reqId: reqId + '-' + wid, w: wid, ts: st.ts }); } catch (e) {}
+            }
           }
           // Build 66: same late-joiner pattern for the stage + FOH lights —
           // peers already in the room answer with the current layout.
@@ -12134,6 +12601,7 @@ net.onWallSyncReqCb = handleWallSyncReq;
 net.onWallSyncCb = handleWallSync;
 net.onWallHelloCb = handleWallHello; // build 26: last-writer-wins convergence
 net.onWallUndoCb = handleWallUndo; // build 26: peer undid a stroke
+net.onWallFreshCb = handleWallFresh; // build 84: peer archived + cleared a wall
 // Jukebox (build 21): synced queue playback.
 net.onJukeAddCb = handleJukeAdd;
 net.onJukeRemoveCb = handleJukeRemove;
@@ -12150,6 +12618,11 @@ net.onTheatreAddCb = handleTheatreAdd;
 net.onTheatrePlayCb = handleTheatrePlay;
 net.onTheatrePauseCb = handleTheatrePause;
 net.onTheatreStateReqCb = handleTheatreStateReq;
+// Build 82: media host election — best internet wins, hosts the links.
+net.onMediaPingCb = handleMediaPing;
+net.onMediaPongCb = handleMediaPong;
+net.onMediaScoreCb = handleMediaScore;
+net.onMediaHostSyncCb = handleMediaHostSync;
 // Stage builder + front of house (build 66): layout + light rig ride the room.
 net.onStageSyncCb = handleStageSync;
 net.onStageReqCb = handleStageReq;
@@ -12162,7 +12635,7 @@ net.onModelReqCb = handleModelReq;
 net.onModelChunkCb = handleModelChunk;
 /* Build 43: the relay is live — start holder election hellos and ask the
    holder for the line if we're empty (the old blind timer fired too early). */
-net.onRelayUpCb = () => { jukeStartHellos(); jukeMaybeSync(); };
+net.onRelayUpCb = () => { jukeStartHellos(); jukeMaybeSync(); mediaHostStart(); };
 net.onJukeFileReqCb = handleJukeFileReq; // build 27: phone-file P2P
 net.onJukeFileChunkCb = handleJukeFileChunk;
 net.onJukeFileHaveCb = handleJukeFileHave;
@@ -12198,12 +12671,6 @@ gearBtn.addEventListener('click', (e) => {
   gearBtn.blur();
 });
 settingsClose.addEventListener('click', () => setSettings(false));
-// limboverse: manual verse snapshot
-try {
-  document.getElementById('verse-save-btn').addEventListener('click', () => {
-    verseSaveNow();
-  });
-} catch (e) {}
 soundToggle.addEventListener('click', () => {
   setMuted(audio.toggleMute());
   soundToggle.blur();
@@ -12488,10 +12955,14 @@ function loop() {
     try { if (localTrail && localTrail.setPulse) localTrail.setPulse(roomBassSmooth); } catch (e) {}
   }
 
-  // Community wall (build 18): push new strokes to the GPU texture.
-  if (wall.texDirty && wall.tex) {
-    wall.tex.needsUpdate = true;
-    wall.texDirty = false;
+  // Community walls (build 18; build 84: four of them): push new strokes
+  // to the GPU textures.
+  for (const wid of WALL_IDS) {
+    const st = wallStates[wid];
+    if (st.texDirty && st.tex) {
+      st.tex.needsUpdate = true;
+      st.texDirty = false;
+    }
   }
 
   // Free flight everywhere — including the journey (its update adds
@@ -12548,6 +13019,8 @@ window.addEventListener('resize', () => {
 /* Test + diagnostics hook: exposes multiplayer internals so automated
    tests (and future debugging) can drive the chat/proximity paths
    without needing a real second peer. */
+// Build 88: successful boot clears the SW self-heal tripwire in index.html.
+try { sessionStorage.setItem('limbo-booted', '1'); } catch (e) {}
 window.__limbo = {
   net,
   wisp,
@@ -13036,14 +13509,14 @@ window.__limbo = {
   wallExportPng: () => wallExportPng(),
   wallLoopback: (d) => {
     const ok = wallValidStroke(d);
-    if (net.sendWallStroke) { try { net.sendWallStroke(d); } catch (e) {} }
-    handleWallStroke('loopback', d);
+    if (net.sendWallStroke) { try { net.sendWallStroke(Object.assign({ w: wall.id }, d)); } catch (e) {} }
+    handleWallStroke('loopback', Object.assign({ w: wall.id }, d));
     return ok;
   },
   wallSnapshot: () => wallSnapshot(),
   wallApplySnapshot: (u) => wallApplySnapshot(u),
   wallHandleSync: (d, pid) => handleWallSync(pid || 'test-peer', d),
-  wallSendSyncReq: (id) => { try { return !!(net.sendWallSyncReq && net.sendWallSyncReq({ reqId: id, ts: wall.ts })); } catch (e) { return false; } },
+  wallSendSyncReq: (id) => { try { return !!(net.sendWallSyncReq && net.sendWallSyncReq({ reqId: id, w: wall.id, ts: wall.ts })); } catch (e) { return false; } },
   wallHandleSyncReq: (d, pid) => handleWallSyncReq(pid || 'test-peer', d),
   wallAnswered: () => [...wall.answeredReq],
   // community wall persistence (build 26)
@@ -13052,7 +13525,7 @@ window.__limbo = {
   wallSaveSnapshotNow: () => wallSaveSnapshot(),
   wallRestoreSnapshot: () => wallRestoreSnapshot(),
   wallHandleHello: (d, pid) => handleWallHello(pid || 'test-peer', d),
-  wallHelloSend: (ts) => { try { return !!(net.sendWallHello && net.sendWallHello({ ts })); } catch (e) { return false; } },
+  wallHelloSend: (ts) => { try { return !!(net.sendWallHello && net.sendWallHello({ w: wall.id, ts })); } catch (e) { return false; } },
   // community wall undo (build 26)
   wallUndo: () => wallUndoMyLast(),
   wallHandleUndo: (d, pid) => handleWallUndo(pid || 'test-peer', d),

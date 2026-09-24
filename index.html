@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#020204">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=82">
+<link rel="stylesheet" href="css/style.css?v=90">
 <script type="importmap">
 {
   "imports": {
@@ -24,15 +24,41 @@
 </script>
 <!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
      Local files, not a CDN — the couch co-op ceremony must work offline. -->
-<script src="js/vendor/qrcode.js?v=82"></script>
-<script src="js/vendor/jsqr.js?v=82"></script>
+<script src="js/vendor/qrcode.js?v=90"></script>
+<script src="js/vendor/jsqr.js?v=90"></script>
 <!-- build 34: offline-first PWA — after one online visit the whole game
      (including three.js) is cached and boots with zero bars. -->
 <script>
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
-  });
+  (function () {
+    // Build 88: self-healing — if the page starts loading 3+ times in
+    // 20s without booting, the service worker is poisoned. Nuke it and
+    // reload clean. This is what ends the "keeps retrying to load" loop.
+    try {
+      var now = Date.now();
+      var attempts = JSON.parse(sessionStorage.getItem('limbo-boot-attempts') || '[]');
+      attempts = attempts.filter(function (t) { return now - t < 20000; });
+      attempts.push(now);
+      sessionStorage.setItem('limbo-boot-attempts', JSON.stringify(attempts));
+      // game.js clears this on successful boot — if it survives, boot failed
+      if (attempts.length >= 3 && !sessionStorage.getItem('limbo-booted')) {
+        sessionStorage.removeItem('limbo-boot-attempts');
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }).then(function () {
+          return caches.keys();
+        }).then(function (keys) {
+          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+        }).then(function () {
+          location.reload();
+        }).catch(function () { location.reload(); });
+        return; // don't register a new worker while we're nuking
+      }
+    } catch (e) {}
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  })();
 }
 </script>
 </head>
@@ -66,8 +92,12 @@ if ('serviceWorker' in navigator) {
 <!-- community wall paint mode — only visible inside the sound room (build 18) -->
 <button id="paint-btn" style="display:none">&#127912; paint</button>
 
-<!-- jukebox — synced queue playback, only visible inside the sound room (build 21) -->
-<button id="juke-btn" style="display:none">&#127925; jukebox</button>
+<!-- jukebox — synced queue playback, only visible inside the sound room (build 21).
+     Build 82: the trigger is a side tab on the right edge; the panel is a
+     drawer that slides in from the right. -->
+<div id="side-tabs">
+  <button id="juke-btn" class="side-tab" style="display:none" aria-label="jukebox"><span class="side-tab-emoji">&#127925;</span><span class="side-tab-label">jukebox</span></button>
+</div>
 <div id="juke-panel" style="display:none">
   <div class="juke-head"><span>&#127925; JUKEBOX</span><span style="display:flex;align-items:center;gap:2px"><span id="juke-holder" class="juke-holder"></span><button id="juke-clear" aria-label="clear the queue">clear</button><button id="juke-close" aria-label="close">&#10005;</button></span></div>
   <div class="juke-now">
@@ -119,6 +149,7 @@ if ('serviceWorker' in navigator) {
     <button id="theatre-playpause" aria-label="play or pause">&#9654;</button>
     <button class="theatre-mutebtn mini-mutebtn" aria-label="mute the video room" title="mute the video room">&#128250;</button>
     <button class="jam-mutebtn mini-mutebtn" aria-label="mute the sound room" title="mute the sound room">&#127925;</button>
+    <button id="theatre-sizebtn" aria-label="screen size" title="screen size — tap to cycle S / M / L">&#9966; M</button>
     <input id="theatre-url" placeholder="paste a youtube link…" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button id="theatre-queue-btn">watch</button>
   </div>
@@ -128,7 +159,15 @@ if ('serviceWorker' in navigator) {
 <div id="paint-overlay" style="display:none">
   <div class="paint-head">
     <span>&#127912; COMMUNITY WALL</span>
+    <!-- Build 84: pick which of the four walls to paint on -->
+    <div id="wall-picker" aria-label="choose wall">
+      <button data-wall="north" class="wall-pick active" aria-label="paint the north wall">N</button>
+      <button data-wall="east" class="wall-pick" aria-label="paint the east wall">E</button>
+      <button data-wall="south" class="wall-pick" aria-label="paint the south wall">S</button>
+      <button data-wall="west" class="wall-pick" aria-label="paint the west wall">W</button>
+    </div>
     <div class="paint-head-btns">
+      <button id="paint-fresh" aria-label="archive this mural and start a fresh wall">✨ fresh</button>
       <button id="paint-save" aria-label="save wall as PNG">💾 save</button>
       <button id="paint-done">done</button>
     </div>
@@ -609,6 +648,6 @@ if ('serviceWorker' in navigator) {
 <!-- minimal touch joystick UI -->
 <div id="joy-base"><div id="joy-knob"></div></div>
 
-<script type="module" src="js/game.js?v=82"></script>
+<script type="module" src="js/game.js?v=90"></script>
 </body>
 </html>

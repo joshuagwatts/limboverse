@@ -43,7 +43,7 @@ export class AudioEngine {
     this.filter.Q.value = 0.8;
 
     this.padBus = ctx.createGain();
-    this.padBus.gain.value = 0.55;
+    this.padBus.gain.value = 0; // Build 85: the drone is gone — pad bus muted.
     this.padBus.connect(this.filter);
     this.filter.connect(this.aura);
 
@@ -70,23 +70,7 @@ export class AudioEngine {
     this.delay.connect(wet);
     wet.connect(this.aura);
 
-    // Three detuned voices: sine root, beating triangle, soft octave.
-    const voices = [
-      { type: 'sine', mul: 1.0, g: 0.5 },
-      { type: 'triangle', mul: 1.004, g: 0.32 },
-      { type: 'sine', mul: 2.003, g: 0.16 },
-    ];
-    for (const v of voices) {
-      const o = ctx.createOscillator();
-      o.type = v.type;
-      o.frequency.value = rootFreq * v.mul;
-      const og = ctx.createGain();
-      og.gain.value = v.g;
-      o.connect(og);
-      og.connect(this.padBus);
-      o.start();
-      this.oscs.push({ osc: o, mul: v.mul });
-    }
+    // Build 85: the drone is gone — pad bus muted above, voices not started.
 
     // Fade the master in over a couple of seconds — no clicks.
     this.master.gain.setTargetAtTime(0.16, ctx.currentTime, 1.8);

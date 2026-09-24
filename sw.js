@@ -14,24 +14,24 @@
  * successful (ok) responses).
  */
 
-const BUILD = '82';
+const BUILD = '90';
 const CACHE = `limbo-v${BUILD}`;
 
-/* Same version stamps the page uses (?v=82). query strings are part of
+/* Same version stamps the page uses (?v=90). query strings are part of
    the cache key — that is exactly what we want. */
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/style.css?v=82',
-  './js/game.js?v=82',
-  './js/net.js?v=82',
-  './js/couch.js?v=82',
-  './js/jam.js?v=82',
-  './js/audio.js?v=82',
-  './js/flock.js?v=82',
-  './js/vendor/qrcode.js?v=82',
-  './js/vendor/jsqr.js?v=82',
+  './css/style.css?v=90',
+  './js/game.js?v=90',
+  './js/net.js?v=90',
+  './js/couch.js?v=90',
+  './js/jam.js?v=90',
+  './js/audio.js?v=90',
+  './js/flock.js?v=90',
+  './js/vendor/qrcode.js?v=90',
+  './js/vendor/jsqr.js?v=90',
   './assets/realm1.jpg',
   './assets/realm2.jpg',
   './assets/realm3.jpg',
@@ -83,6 +83,25 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   event.respondWith(
     (async () => {
+      // Build 87: navigations (the HTML document) go network-first.
+      // A refresh must always get the latest index.html with the latest
+      // ?v= stamps — cache-first here is what forced the "close the tab"
+      // dance. Fall back to cache only when truly offline.
+      if (request.mode === 'navigate') {
+        try {
+          const res = await fetch(request, { cache: 'no-cache' });
+          if (res && res.ok) {
+            const cache = await caches.open(CACHE);
+            cache.put('./index.html', res.clone());
+            cache.put('./', res.clone());
+          }
+          return res;
+        } catch (e) {
+          const shell = await caches.match('./index.html');
+          if (shell) return shell;
+          throw e;
+        }
+      }
       const cached = await caches.match(request);
       if (cached) return cached;
       try {

@@ -153,6 +153,7 @@ const ACTION_CBS = {
   wallSync: 'onWallSyncCb',
   wallHello: 'onWallHelloCb',
   wallUndo: 'onWallUndoCb',
+  wallFresh: 'onWallFreshCb', // build 84: a wall was archived + cleared
   jukeAdd: 'onJukeAddCb',
   jukeRemove: 'onJukeRemoveCb',
   jukePlay: 'onJukePlayCb',
@@ -171,6 +172,10 @@ const ACTION_CBS = {
   theatrePlay: 'onTheatrePlayCb', // build 75: play video from position (synced)
   theatrePause: 'onTheatrePauseCb', // build 75: pause video at position
   theatreStateReq: 'onTheatreStateReqCb', // build 75: late joiner asks what's playing
+  mediaPing: 'onMediaPingCb', // build 82: RTT probe for media-host election
+  mediaPong: 'onMediaPongCb', // build 82: RTT reply
+  mediaScore: 'onMediaScoreCb', // build 82: "my avg RTT is X" for host election
+  mediaHostSync: 'onMediaHostSyncCb', // build 82: host's authoritative media state
   stageSync: 'onStageSyncCb', // build 66: shared sound-room stage layout
   stageReq: 'onStageReqCb', // build 66: late joiner asks for the stage
   fohSync: 'onFohSyncCb', // build 66: shared front-of-house light rig
@@ -203,6 +208,9 @@ const JUKE_SERVER_ACTIONS = new Set([
   /* Build 75: the theatre rides the same server channel — one shared
      screen per server, audible from any room (including the jam). */
   'theatreAdd', 'theatrePlay', 'theatrePause', 'theatreStateReq',
+  /* Build 82: media-host election rides here too — the best-connected peer
+     becomes the authoritative host for theatre + jukebox state. */
+  'mediaPing', 'mediaPong', 'mediaScore', 'mediaHostSync',
 ]);
 
 /* OpenRelay static-auth (no signup): time-limited HMAC-SHA1 credentials. */
@@ -575,6 +583,7 @@ export class LimboNet {
     this.onWallSyncCb = null; // (data, peerId)
     this.onWallHelloCb = null; // (data, peerId)
     this.onWallUndoCb = null; // (data, peerId)
+    this.onWallFreshCb = null; // (data, peerId) — build 84
     this.onJukeAddCb = null; // (data, peerId)
     this.onJukeRemoveCb = null; // (data, peerId)
     this.onJukePlayCb = null; // (data, peerId)
@@ -957,7 +966,19 @@ export class LimboNet {
   async boot(name) {
     if (name) this.name = this.cleanName(name);
     if (this._bootPromise) return this._bootPromise;
-    this._bootPromise = this._boot();
+    // Build 88: boot must not hang forever — if the Trystero modules don't
+    // load in 12s (flaky CDN, blocked network), fall back to solo instead
+    // of leaving the server list spinning on "finding servers…".
+    this._bootPromise = Promise.race([
+      this._boot(),
+      new Promise((resolve) => setTimeout(() => {
+        if (!this.enabled) {
+          this._netLog('boot: module load timed out — solo drift');
+          try { this._ensurePill(); this._updatePill(); } catch (e) {}
+        }
+        resolve(this.enabled);
+      }, 12000)),
+    ]);
     return this._bootPromise;
   }
 

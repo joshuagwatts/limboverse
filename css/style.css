@@ -1255,6 +1255,20 @@ html, body {
   padding: 10px 16px; min-height: 44px;
   cursor: pointer; touch-action: manipulation;
 }
+/* Build 84: wall picker — N/E/S/W tabs */
+#wall-picker { display: flex; gap: 4px; flex-shrink: 0; }
+.wall-pick {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff; font-family: inherit; font-size: 13px; font-weight: bold;
+  cursor: pointer; touch-action: manipulation;
+}
+.wall-pick.active {
+  background: rgba(141, 255, 122, 0.20);
+  border-color: rgba(141, 255, 122, 0.70);
+  color: #d2ffc4;
+}
 #paint-wrap {
   flex: 1 1 auto; min-height: 0; width: 100%;
   display: flex; align-items: center; justify-content: stretch;
@@ -2050,6 +2064,36 @@ html { -webkit-text-size-adjust: 100%; }
   padding: 4px 12px 0; text-shadow: 0 1px 6px rgba(0,0,0,0.9);
 }
 
+/* ---------- side tabs (build 82): jukebox lives on the right edge ---------- */
+#side-tabs {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+  z-index: 48; display: flex; flex-direction: column; gap: 8px;
+}
+#side-tabs #juke-btn.side-tab {
+  position: static; bottom: auto; left: auto; transform: none;
+  writing-mode: vertical-rl; text-orientation: mixed;
+  background: rgba(141, 255, 122, 0.10);
+  border: 1px solid rgba(141, 255, 122, 0.55); border-right: none;
+  border-radius: 12px 0 0 12px;
+  color: #d2ffc4; font-family: inherit; letter-spacing: 0.25em;
+  font-size: 11px; text-transform: uppercase;
+  padding: 18px 10px; cursor: pointer; touch-action: manipulation;
+  display: flex; align-items: center; gap: 8px;
+  min-height: 120px; min-width: 0;
+}
+#side-tabs #juke-btn.side-tab:active { background: rgba(141, 255, 122, 0.25); }
+.side-tab .side-tab-emoji { font-size: 18px; }
+/* build 82: jukebox panel is a right-side drawer, not a bottom sheet */
+#juke-panel {
+  left: auto; right: 0; top: 0; bottom: 0;
+  width: min(420px, 88vw); max-height: none;
+  border-top: none; border-left: 1px solid rgba(141, 255, 122, 0.35);
+  border-radius: 0;
+  padding: calc(14px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
+  transform: translateX(0);
+  transition: transform 0.25s ease-out;
+}
+#juke-panel[style*="display: none"] { transform: translateX(100%); }
 /* LIMBOVERSE: verse history (settings panel) */
 .verse-save-row { margin: 6px 0; }
 .verse-save-row button {
@@ -2071,3 +2115,4 @@ html { -webkit-text-size-adjust: 100%; }
   border-radius: 6px; cursor: pointer; flex: 0 0 auto;
 }
 .verse-restore:active { background: rgba(159, 216, 255, 0.25); }
+
