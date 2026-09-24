@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=100';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=100';
-import { CouchNet } from './couch.js?v=100';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=100';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=100';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=100';
+import { AudioEngine } from './audio.js?v=101';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=101';
+import { CouchNet } from './couch.js?v=101';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=101';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=101';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=101';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -13408,17 +13408,23 @@ function updateVehicle(dt, ix, iz, iy) {
     if (sp > def.vmax) { vel.x *= def.vmax / sp; vel.z *= def.vmax / sp; }
     vel.multiplyScalar(Math.exp(-0.7 * dt)); // rolling resistance
   } else if (v.type === 'jet') {
-    // speed demon: always moving forward, wide banked turns
+    // speed demon: inverted flight-stick — push forward (W/up) = nose DOWN,
+    // pull back (S/down) = nose UP. Always moving forward, wide banked turns.
+    if (v.pitch === undefined) v.pitch = 0;
+    v.pitch = THREE.MathUtils.clamp(v.pitch - iz * 1.6 * dt, -0.75, 0.75);
+    v.pitch *= Math.exp(-0.25 * dt); // gentle auto-level when hands off
     v.heading -= ix * def.turn * dt;
-    _fwd.set(-Math.sin(v.heading) * Math.cos(pitch), Math.sin(pitch), -Math.cos(v.heading) * Math.cos(pitch));
-    const throttle = 0.55 + 0.45 * iz; // base cruise + throttle
+    const cp = Math.cos(v.pitch);
+    _fwd.set(-Math.sin(v.heading) * cp, Math.sin(v.pitch), -Math.cos(v.heading) * cp);
+    // throttle: cruise base, Space = afterburner, Shift = brake
+    const throttle = iy > 0 ? 1.0 : iy < 0 ? 0.45 : 0.72;
     vel.lerp(_jTmpA.copy(_fwd).multiplyScalar(def.vmax * throttle), k);
     // never stall: enforce minimum forward speed
     const sp = vel.length();
     if (sp < def.vmin) vel.multiplyScalar(def.vmin / Math.max(0.1, sp));
-    // bank into the turn (visual via group roll)
+    // bank into the turn + pitch the model (visual)
     v.group.rotation.z = THREE.MathUtils.lerp(v.group.rotation.z, ix * 0.55, k);
-    wisp.position.y = Math.max(J_MIN_Y + 1, Math.min(J_MAX_Y, wisp.position.y + iy * 14 * dt));
+    v.group.rotation.x = THREE.MathUtils.lerp(v.group.rotation.x, -v.pitch * 0.8, k);
   } else if (v.type === 'heli') {
     // hovercraft: precise, can sit still mid-air
     v.heading -= ix * def.turn * dt * 0.6;
