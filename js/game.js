@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=98';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=98';
-import { CouchNet } from './couch.js?v=98';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=98';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=98';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=98';
+import { AudioEngine } from './audio.js?v=99';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=99';
+import { CouchNet } from './couch.js?v=99';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=99';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=99';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=99';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -13459,6 +13459,8 @@ function updatePlayer(dt) {
   // build 41: proximity-graded speed — flock slipstream, ring/gem nearness,
   // drafting off nearby drifters, plus ring/gem bursts. Not a binary fast mode.
   // (updateJourney runs before updatePlayer each frame, so journey.boost is fresh.)
+  // (updateJourney runs before updatePlayer each frame, so journey.boost is fresh.)
+  const boost = (isJourney && journey.boost > 0) ? journey.boost : 1;
   // build 98: vehicles override the wisp physics
   if (isJourney && journey.vehicle && updateVehicle(dt, ix, iz, iy)) {
     wisp.position.addScaledVector(vel, dt);
