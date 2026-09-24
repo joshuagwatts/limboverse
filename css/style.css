@@ -2137,6 +2137,23 @@ html { -webkit-text-size-adjust: 100%; }
   transition: transform 0.25s ease-out;
 }
 #juke-panel[style*="display: none"] { transform: translateX(100%); }
+
+/* build 95: sculpt top bar must fit on phones — the done button was pushed off-screen */
+@media (max-width: 480px) {
+  .sc-top { gap: 6px; left: 8px; right: 8px; }
+  .sc-top button { min-width: 40px; min-height: 40px; padding: 4px 8px; font-size: 13px; }
+  #sc-name { font-size: 10px; letter-spacing: 0.1em; }
+  #sc-done { font-size: 12px; white-space: nowrap; }
+}
+
+/* build 95: on narrow phones, sculpt top bar goes icon-only so done stays on-screen */
+@media (max-width: 380px) {
+  #sc-name { display: none; }
+  #sc-wire { font-size: 0; }
+  #sc-wire::after { content: "≋"; font-size: 14px; }
+  #sc-done { font-size: 0; }
+  #sc-done::after { content: "✓"; font-size: 16px; }
+}
 /* LIMBOVERSE: verse history (settings panel) */
 .verse-save-row { margin: 6px 0; }
 .verse-save-row button {
