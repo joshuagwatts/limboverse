@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=93';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=93';
-import { CouchNet } from './couch.js?v=93';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=93';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=93';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=93';
+import { AudioEngine } from './audio.js?v=94';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=94';
+import { CouchNet } from './couch.js?v=94';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=94';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=94';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=94';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -9456,10 +9456,14 @@ function sculptStrokeTo(nx, ny) {
     // track the screen-space line for the cut
     st.trimEnd = { x: (nx * 0.5 + 0.5) * window.innerWidth, y: (-ny * 0.5 + 0.5) * window.innerHeight };
   }
-  // dab spacing: walk the segment so fast drags can't skip
+  // dab spacing: walk the segment so fast drags can't skip.
+  // Nomad-style: holding still must NOT accumulate — one wipe lays one layer.
+  // Only move/drag (which track pointer deltas) bypass the spacing gate.
   const r = sculptLocalRadius();
   const step = Math.max(0.03, r * 0.3);
   const dist = st.last.distanceTo(local);
+  const isDisplacement = st.brush !== 'move' && st.brush !== 'drag' && st.brush !== 'trim' && st.brush !== 'mask' && st.brush !== 'paint';
+  if (isDisplacement && dist < step * 0.6) return true; // haven't traveled — no new clay
   const steps = Math.max(1, Math.min(32, Math.floor(dist / step)));
   const gd = g ? g.clone().multiplyScalar(1 / steps) : null;
   for (let k = 1; k <= steps; k++) {
@@ -9903,7 +9907,11 @@ if (scWireEl) scWireEl.addEventListener('click', () => {
   if (sculpt.mesh && sculpt.mesh.material) sculpt.mesh.material.wireframe = sculpt.wire;
   sculptRenderUI(); scWireEl.blur();
 });
-if (scDoneEl) scDoneEl.addEventListener('click', () => { sculptExit(); scDoneEl.blur(); });
+if (scDoneEl) {
+  // build 94: pointerup for reliable mobile taps (click alone was dropping on Android)
+  scDoneEl.addEventListener('pointerup', (e) => { e.preventDefault(); sculptExit(); scDoneEl.blur(); });
+  scDoneEl.addEventListener('click', () => { if (sculpt.active) sculptExit(); scDoneEl.blur(); });
+}
 if (workshopBtn) workshopBtn.addEventListener('click', () => { setWorkshopPanel(!ws.open); workshopBtn.blur(); });
 if (workshopCloseBtn) workshopCloseBtn.addEventListener('click', () => setWorkshopPanel(false));
 if (wsAddEl) {
