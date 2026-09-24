@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=97';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=97';
-import { CouchNet } from './couch.js?v=97';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=97';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=97';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=97';
+import { AudioEngine } from './audio.js?v=98';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=98';
+import { CouchNet } from './couch.js?v=98';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=98';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=98';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=98';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -968,7 +968,15 @@ function makeTrail(n, sizeScale) {
 const localTrail = makeTrail(60, 1);
 function retintTrail(hex) { localTrail.setColor(hex); }
 function clearTrail() { localTrail.clear(wisp.position); }
-function pushTrail(dt) { localTrail.update(wisp.position, dt); }
+function pushTrail(dt) {
+  // build 98: rainbow boost re-tints the trail live, cycling hue
+  if (journey.rainbowT > 0) {
+    _rbColor.setHSL((clock.elapsedTime * 0.6) % 1, 1, 0.6);
+    localTrail.setColor(_rbColor.getHex());
+  }
+  localTrail.update(wisp.position, dt);
+}
+const _rbColor = new THREE.Color();
 
 /* ---------------- wisp customization: skins & hats ----------------
    Attuning a realm (all 5 echoes) unlocks cosmetics. Unlocks + equipped
@@ -1496,6 +1504,12 @@ const journeyHomeBtn = document.getElementById('journey-home-btn');
 if (journeyHomeBtn) journeyHomeBtn.addEventListener('click', () => {
   try { goTo('nexus'); } catch (e) {}
   journeyHomeBtn.blur();
+});
+// build 98: vehicle exit button
+const vehExitBtn = document.getElementById('veh-exit');
+if (vehExitBtn) vehExitBtn.addEventListener('click', () => {
+  journeyExitVehicle();
+  vehExitBtn.blur();
 });
 const journeyJammuteBtn = document.getElementById('journey-jammute');
 if (journeyJammuteBtn) journeyJammuteBtn.addEventListener('click', () => {
@@ -10928,6 +10942,12 @@ function buildJourneyRoom() {
   // build 49: manta rays, built once with the field
   if (!journey.rays) buildJourneyRays(scene);
   else for (const r of journey.rays) scene.add(r.group);
+  // build 98: vehicles — dunebuggy, jet, helicopter. Built once with the field.
+  if (!journey.vehicles) buildJourneyVehicles(scene);
+  else for (const v of journey.vehicles) { if (!v.boarded) scene.add(v.group); }
+  // build 98: rainbow boosts — grab one for 12s of rainbow trail + speed
+  if (!journey.rainbows) buildJourneyRainbows(scene);
+  else for (const r of journey.rainbows) scene.add(r.mesh);
   // spawn in the dunes, facing the crossroads gate
   const spawnYaw = Math.atan2(-(0 - J_SPAWN.x), -(0 - J_SPAWN.z));
   return {
@@ -11207,6 +11227,196 @@ function releaseRay(ray) {
   // there's no snap, the sines take over from this direction
   ray.heading = ray.yaw;
 }
+/* ---------------- vehicles (build 98) ----------------
+   Dunebuggy rips the ground, jet screams through the sky, helicopter
+   hovers and threads the spires. Board by tapping a parked vehicle. */
+
+const VEH_DEFS = {
+  buggy: { name: 'Dunebuggy', accel: 50, vmax: 40, turn: 2.4, groundY: 3.2, color: 0xff7733 },
+  jet:   { name: 'Jet',       accel: 34, vmax: 62, vmin: 20, turn: 1.2, color: 0x44aaff },
+  heli:  { name: 'Helicopter',accel: 30, vmax: 32, turn: 3.2, hover: true, color: 0x88ff66 },
+};
+
+function makeBuggyMesh() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0xff7733, roughness: 0.6, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.9, 5.2), mat);
+  body.position.y = 1.1; g.add(body);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 2.2), dark);
+  cab.position.set(0, 1.9, -0.6); g.add(cab);
+  // roll cage
+  const cageMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5, metalness: 0.6 });
+  for (const [x, z] of [[-1.1, -1.4], [1.1, -1.4], [-1.1, 0.4], [1.1, 0.4]]) {
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.4), cageMat);
+    bar.position.set(x, 2.4, z); g.add(bar);
+  }
+  // wheels
+  const wg = new THREE.CylinderGeometry(0.65, 0.65, 0.5, 12);
+  for (const [x, z] of [[-1.7, 1.7], [1.7, 1.7], [-1.7, -1.7], [1.7, -1.7]]) {
+    const w = new THREE.Mesh(wg, dark);
+    w.rotation.z = Math.PI / 2; w.position.set(x, 0.65, z); g.add(w);
+  }
+  // spoiler
+  const sp = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.12, 0.7), mat);
+  sp.position.set(0, 2.2, -2.4); g.add(sp);
+  return g;
+}
+
+function makeJetMesh() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x44aaff, roughness: 0.4, metalness: 0.6 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1a2a44, roughness: 0.5, metalness: 0.4 });
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 6.5, 10), mat);
+  fus.rotation.x = Math.PI / 2; g.add(fus);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.7, 2.2, 10), dark);
+  nose.rotation.x = -Math.PI / 2; nose.position.z = -4.3; g.add(nose);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.15, 1.8), mat);
+  wing.position.z = 0.8; g.add(wing);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.15, 2.2, 1.4), mat);
+  tail.position.set(0, 1.2, 2.8); g.add(tail);
+  const cock = new THREE.Mesh(new THREE.SphereGeometry(0.65, 10, 8), dark);
+  cock.scale.set(1, 0.7, 1.6); cock.position.set(0, 0.7, -1.2); g.add(cock);
+  // engine glow
+  const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 0.6, 10),
+    new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+  glow.rotation.x = Math.PI / 2; glow.position.z = 3.4; g.add(glow);
+  g.userData.glow = glow;
+  return g;
+}
+
+function makeHeliMesh() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x88ff66, roughness: 0.55, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1a3311, roughness: 0.6 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.8, 4.2), mat);
+  body.position.y = 0.4; g.add(body);
+  const cock = new THREE.Mesh(new THREE.SphereGeometry(1.0, 10, 8), dark);
+  cock.scale.set(1, 0.8, 1.2); cock.position.set(0, 0.6, -1.8); g.add(cock);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.6), dark);
+  mast.position.y = 2.0; g.add(mast);
+  const rotor = new THREE.Mesh(new THREE.BoxGeometry(11, 0.08, 0.7), dark);
+  rotor.position.y = 2.8; g.add(rotor);
+  g.userData.rotor = rotor;
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.45, 5.5, 8), mat);
+  boom.rotation.x = Math.PI / 2; boom.position.set(0, 0.8, 4.5); g.add(boom);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.8, 1.0), mat);
+  fin.position.set(0, 1.6, 7.0); g.add(fin);
+  // skids
+  for (const x of [-1.2, 1.2]) {
+    const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 3.6), dark);
+    skid.rotation.x = Math.PI / 2; skid.position.set(x, -0.9, 0); g.add(skid);
+  }
+  return g;
+}
+
+function buildJourneyVehicles(scene) {
+  const defs = [
+    { type: 'buggy', x: 45, z: 60 },
+    { type: 'jet', x: -55, z: 40 },
+    { type: 'heli', x: 10, z: -70 },
+  ];
+  const vehicles = [];
+  for (const d of defs) {
+    const maker = d.type === 'buggy' ? makeBuggyMesh : d.type === 'jet' ? makeJetMesh : makeHeliMesh;
+    const group = maker();
+    const def = VEH_DEFS[d.type];
+    // pad: glowing ring on the ground
+    const pad = new THREE.Mesh(new THREE.RingGeometry(4, 5.2, 24),
+      new THREE.MeshBasicMaterial({ color: def.color, transparent: true, opacity: 0.5,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    pad.rotation.x = -Math.PI / 2; pad.position.y = 0.15;
+    group.add(pad);
+    group.position.set(d.x, d.type === 'buggy' ? 0 : 6, d.z);
+    group.rotation.y = Math.atan2(-d.x, -d.z); // face the crossroads
+    scene.add(group);
+    // tap target
+    const hit = new THREE.Mesh(new THREE.SphereGeometry(6, 8, 8),
+      new THREE.MeshBasicMaterial({ visible: false }));
+    hit.position.y = 2; group.add(hit);
+    vehicles.push({ type: d.type, def, group, hit, boarded: false, heading: group.rotation.y });
+    hit.userData.vehicle = vehicles[vehicles.length - 1];
+  }
+  journey.vehicles = vehicles;
+  journey.vehicle = null; // the one you're riding, if any
+}
+
+function journeyBoardVehicle(v) {
+  if (journey.vehicle) return;
+  journey.vehicle = v;
+  v.boarded = true;
+  // hide the wisp, show the vehicle at the wisp's spot
+  if (wispCore) wispCore.visible = false;
+  if (wispGroup) wispGroup.visible = false;
+  scene.remove(v.group); // re-add to keep it in the render list cleanly
+  scene.add(v.group);
+  v.heading = Math.atan2(-wisp.position.x, -wisp.position.z);
+  journeyToast('riding the ' + v.def.name + ' — tap ✕ to hop out');
+  const exitBtn = document.getElementById('veh-exit');
+  if (exitBtn) exitBtn.style.display = 'flex';
+}
+
+function journeyExitVehicle() {
+  const v = journey.vehicle;
+  if (!v) return;
+  // park it where you left it
+  v.group.position.copy(wisp.position);
+  if (v.type === 'buggy') v.group.position.y = 0;
+  v.boarded = false;
+  journey.vehicle = null;
+  if (wispCore) wispCore.visible = true;
+  if (wispGroup) wispGroup.visible = true;
+  const exitBtn = document.getElementById('veh-exit');
+  if (exitBtn) exitBtn.style.display = 'none';
+  journeyToast('back on foot');
+}
+
+/* Rainbow boost (build 98): prismatic orbs — 12s of rainbow trail + 1.4x speed. */
+function buildJourneyRainbows(scene) {
+  const rainbows = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.5;
+    const rad = 120 + (i % 3) * 60;
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(2.6, 0),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    mesh.position.set(Math.cos(a) * rad, 14 + (i % 2) * 10, Math.sin(a) * rad);
+    scene.add(mesh);
+    rainbows.push({ mesh, active: true, respawn: 0, phase: Math.random() * Math.PI * 2,
+      x: mesh.position.x, y: mesh.position.y, z: mesh.position.z });
+  }
+  journey.rainbows = rainbows;
+  journey.rainbowT = 0;
+}
+
+function journeyGrabRainbow(r) {
+  r.active = false; r.respawn = 25;
+  r.mesh.visible = false;
+  journey.rainbowT = 12;
+  journeyToast('RAINBOW BOOST!');
+}
+
+function journeyTapVehicle(cx, cy) {
+  if (!journey.vehicles || !journey.vehicles.length) return false;
+  if (!active || active.key !== JOURNEY_ROOM_KEY || transitioning) return false;
+  _raycaster.setFromCamera({
+    x: (cx / window.innerWidth) * 2 - 1,
+    y: -(cy / window.innerHeight) * 2 + 1,
+  }, camera);
+  const hits = _raycaster.intersectObjects(journey.vehicles.filter(v => !v.boarded).map(v => v.hit), false);
+  if (!hits.length) return false;
+  const v = hits[0].object.userData.vehicle;
+  if (!v) return false;
+  if (v.group.position.distanceTo(wisp.position) > 18) {
+    journeyToast('get closer to board the ' + v.def.name);
+    return true;
+  }
+  journeyBoardVehicle(v);
+  return true;
+}
 
 function updateJourneyRays(dt, t) {
   if (!journey.rays) return;
@@ -11431,6 +11641,8 @@ function journeyBoostCalc(dt) {
     boost = Math.max(boost, 1 + (wantBoost - 1) * prox);
   }
   if (rayTow) boost += 0.15;
+  // build 98: rainbow boost — 1.4x while the prismatic timer runs
+  if (journey.rainbowT > 0) boost *= 1.4;
   // bursts decay
   journey.ringBoost = Math.max(0, (journey.ringBoost || 0) - dt * 0.55);
   journey.gemBoost = Math.max(0, (journey.gemBoost || 0) - dt * 0.8);
@@ -11445,6 +11657,23 @@ function journeyBoostCalc(dt) {
 function journeyUpdatePickups(dt, t) {
   if (!journey.rings || !journey.gems) return;
   const px = wisp.position.x, py = wisp.position.y, pz = wisp.position.z;
+  // build 98: rainbow boosts — spin, bob, cycle hue, pickup, respawn
+  if (journey.rainbows) {
+    journey.rainbowT = Math.max(0, (journey.rainbowT || 0) - dt);
+    for (const rb of journey.rainbows) {
+      if (!rb.active) {
+        rb.respawn -= dt;
+        if (rb.respawn <= 0) { rb.active = true; rb.mesh.visible = true; }
+        continue;
+      }
+      rb.mesh.rotation.y += dt * 2.2;
+      rb.mesh.rotation.x += dt * 1.1;
+      rb.mesh.position.y = rb.y + Math.sin(t * 2 + rb.phase) * 1.5;
+      rb.mesh.material.color.setHSL((t * 0.25 + rb.phase) % 1, 1, 0.6);
+      const d = Math.hypot(px - rb.mesh.position.x, py - rb.mesh.position.y, pz - rb.mesh.position.z);
+      if (d < 6) journeyGrabRainbow(rb);
+    }
+  }
   for (const r of journey.rings) {
     if (r.cooldown > 0) r.cooldown -= dt;
     r.flash = Math.max(0, r.flash - dt * 2.2);
@@ -12546,7 +12775,7 @@ function endTouch(e) {
       const quick = performance.now() - tapCand.at < 350;
       const tc = tapCand;
       tapCand = null;
-      if (quick) journeyTapRay(t.clientX, t.clientY);
+      if (quick) { if (!journeyTapVehicle(t.clientX, t.clientY)) journeyTapRay(t.clientX, t.clientY); }
     } else if (tapCand && t.identifier === tapCand.id) {
       tapCand = null;
     }
@@ -12572,7 +12801,7 @@ canvas.addEventListener('pointerup', (e) => {
     const quick = performance.now() - mouseTap.at < 400;
     const still = Math.hypot(e.clientX - mouseTap.x, e.clientY - mouseTap.y) < 10;
     mouseTap = null;
-    if (quick && still) journeyTapRay(e.clientX, e.clientY);
+    if (quick && still) { if (!journeyTapVehicle(e.clientX, e.clientY)) journeyTapRay(e.clientX, e.clientY); }
   }
 });
 
@@ -13150,6 +13379,62 @@ const _camWant = new THREE.Vector3();
 const _lookAt = new THREE.Vector3();
 const myFwd = new THREE.Vector3(0, 0, -1); // our heading, broadcast for the flock
 
+/* Vehicle physics (build 98): each vehicle has its own feel.
+   Returns true when a vehicle handled the movement. */
+function updateVehicle(dt, ix, iz, iy) {
+  const v = journey.vehicle;
+  if (!v) return false;
+  const def = v.def;
+  const k = 1 - Math.exp(-3.5 * dt);
+  if (v.type === 'buggy') {
+    // ground ripper: throttle + steering, velocity drifts toward heading
+    v.heading -= ix * def.turn * dt * Math.min(1, vel.length() / 8 + 0.3);
+    const throttle = iz; // W/S or joystick
+    _fwd.set(-Math.sin(v.heading), 0, -Math.cos(v.heading));
+    vel.addScaledVector(_fwd, throttle * def.accel * dt);
+    // lateral drift: bleed off sideways velocity for that power-slide feel
+    const fwdSpd = vel.dot(_fwd);
+    _jTmpA.copy(_fwd).multiplyScalar(fwdSpd);
+    _jTmpB.copy(vel).sub(_jTmpA); // lateral
+    vel.addScaledVector(_jTmpB, -Math.min(1, 6 * dt));
+    // hop
+    if (iy > 0 && v.hopT <= 0) { v.vy = 9; v.hopT = 0.9; }
+    v.hopT = Math.max(0, (v.hopT || 0) - dt);
+    v.vy = (v.vy || 0) - 22 * dt;
+    v.airY = Math.max(0, (v.airY || 0) + v.vy * dt);
+    if (v.airY <= 0) { v.airY = 0; v.vy = 0; }
+    wisp.position.y = def.groundY + v.airY;
+    vel.y = 0;
+    const sp = Math.hypot(vel.x, vel.z);
+    if (sp > def.vmax) { vel.x *= def.vmax / sp; vel.z *= def.vmax / sp; }
+    vel.multiplyScalar(Math.exp(-0.7 * dt)); // rolling resistance
+  } else if (v.type === 'jet') {
+    // speed demon: always moving forward, wide banked turns
+    v.heading -= ix * def.turn * dt;
+    _fwd.set(-Math.sin(v.heading) * Math.cos(pitch), Math.sin(pitch), -Math.cos(v.heading) * Math.cos(pitch));
+    const throttle = 0.55 + 0.45 * iz; // base cruise + throttle
+    vel.lerp(_jTmpA.copy(_fwd).multiplyScalar(def.vmax * throttle), k);
+    // never stall: enforce minimum forward speed
+    const sp = vel.length();
+    if (sp < def.vmin) vel.multiplyScalar(def.vmin / Math.max(0.1, sp));
+    // bank into the turn (visual via group roll)
+    v.group.rotation.z = THREE.MathUtils.lerp(v.group.rotation.z, ix * 0.55, k);
+    wisp.position.y = Math.max(J_MIN_Y + 1, Math.min(J_MAX_Y, wisp.position.y + iy * 14 * dt));
+  } else if (v.type === 'heli') {
+    // hovercraft: precise, can sit still mid-air
+    v.heading -= ix * def.turn * dt * 0.6;
+    _fwd.set(-Math.sin(v.heading), 0, -Math.cos(v.heading));
+    _right.set(Math.cos(v.heading), 0, -Math.sin(v.heading));
+    _move.set(0, 0, 0).addScaledVector(_fwd, iz).addScaledVector(_right, ix);
+    if (_move.lengthSq() > 0) vel.addScaledVector(_move.normalize(), def.accel * dt);
+    vel.multiplyScalar(Math.exp(-3.2 * dt)); // strong hover damping
+    wisp.position.y = Math.max(J_MIN_Y, Math.min(J_MAX_Y, wisp.position.y + iy * 16 * dt));
+    const sp = vel.length();
+    if (sp > def.vmax) vel.multiplyScalar(def.vmax / sp);
+  }
+  return true;
+}
+
 function updatePlayer(dt) {
   // Camera-relative flight axes.
   const cp = Math.cos(pitch);
@@ -13174,7 +13459,23 @@ function updatePlayer(dt) {
   // build 41: proximity-graded speed — flock slipstream, ring/gem nearness,
   // drafting off nearby drifters, plus ring/gem bursts. Not a binary fast mode.
   // (updateJourney runs before updatePlayer each frame, so journey.boost is fresh.)
-  const boost = (isJourney && journey.boost > 0) ? journey.boost : 1;
+  // build 98: vehicles override the wisp physics
+  if (isJourney && journey.vehicle && updateVehicle(dt, ix, iz, iy)) {
+    wisp.position.addScaledVector(vel, dt);
+    // vehicle mesh follows the wisp
+    const v = journey.vehicle;
+    v.group.position.copy(wisp.position);
+    if (v.type === 'buggy') v.group.position.y = 0;
+    v.group.rotation.y = v.heading;
+    // heli rotor spins, jet glow pulses
+    if (v.group.userData.rotor) v.group.userData.rotor.rotation.y += dt * 18;
+    if (v.group.userData.glow) v.group.userData.glow.material.opacity = 0.6 + 0.3 * Math.sin(clock.elapsedTime * 9);
+    // keep inside the field (same bounds as on foot)
+    wisp.position.y = Math.max(J_MIN_Y, Math.min(J_MAX_Y, wisp.position.y));
+    const jhx = wisp.position.x, jhz = wisp.position.z;
+    const jhd = Math.hypot(jhx, jhz);
+    if (jhd > J_FIELD_R) { const js = J_FIELD_R / jhd; wisp.position.x *= js; wisp.position.z *= js; }
+  } else {
   if (_move.lengthSq() > 0) {
     _move.normalize();
     vel.addScaledVector(_move, 26 * boost * dt);
@@ -13219,6 +13520,7 @@ function updatePlayer(dt) {
     }
     wisp.position.y = Math.max(-6, Math.min(30, wisp.position.y));
   }
+  } // end else (non-vehicle movement)
 
   // Wisp idle breathing.
   const b = 1 + Math.sin(clock.elapsedTime * 2.1) * 0.07;
