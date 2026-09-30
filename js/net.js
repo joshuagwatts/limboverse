@@ -74,6 +74,20 @@
  * relays), stays on for the session; the pill shows `● N here · relay`.
  * Oversize payloads (wall JPEG backfills, jukebox file chunks) are
  * skipped in relay mode — they'd blow past relay event size caps.
+ *
+ * PERSISTENT SESSION (build 106) — Joshua's complaint: every portal hop
+ * tore down the whole peer mesh and re-discovered everyone from scratch
+ * ("reloading every room"). Now the WISP layer (who's here + where they
+ * are) rides a per-server SESSION room ('limbo-nexus-N-ses') joined when
+ * the server is picked and left only on a server switch — exactly the
+ * lifecycle the jukebox server channel already had. Location rooms still
+ * join/leave per hop, but they only carry room-scoped features now (jam,
+ * wall, stage, models, voice, file transfers). Wisps carry the sender's
+ * location key (`l`); game.js renders only co-located drifters, so a
+ * buddy who follows you through a portal is simply THERE — their
+ * connection never dropped. Connections are scope-tagged ('s' session /
+ * 'r' room) inside the shared peers map, so a room hop prunes only room
+ * connections and the human stays connected throughout.
  */
 
 const APP_ID = 'limbo_by_holowatts';
@@ -88,6 +102,11 @@ function nexusServerKey(n) {
 }
 function isNexusServerKey(k) {
   return /^limbo-nexus-\d+$/.test(String(k || ''));
+}
+/* Build 106: the persistent session room for a Nexus server — joined at
+   server pick, survives every portal hop, left only on a server switch. */
+function sessionKeyFor(serverKey) {
+  return String(serverKey || '') + '-ses';
 }
 /* Shared presence room: every client joins it at boot and heartbeats
    {name, realm} here. Presence ONLY — no wisps, no chat — so the friends
@@ -645,6 +664,12 @@ export class LimboNet {
     this._jukeServerKey = null; // e.g. 'limbo-nexus-3'
     this._jukeServerTag = null; // relay tag subscribed for jukebox traffic
     this._jukeServerHandler = (obj) => this._onRelayJukeServer(obj);
+    // --- persistent session (build 106): wisps ride a per-server room ---
+    this.sessionRooms = []; // [{si, name, mod, room, selfId, A}] — wisp only
+    this._sessionKey = null; // e.g. 'limbo-nexus-3-ses'
+    this._sessionServerKey = null; // e.g. 'limbo-nexus-3'
+    this._relaySessionTag = null; // relay tag subscribed for session wisps
+    this._relaySessionHandler = (obj) => this._onRelaySession(obj);
     this._lastRelayWisp = 0;
     // --- jukebox link diagnostics (build 73): tx/rx counters read off the
     // phones to see which leg is dead instead of guessing.
@@ -941,7 +966,7 @@ export class LimboNet {
       }
     }
     this.rooms = [];
-    this.peers.clear(); // we had no real peers — that's why we're retrying
+    this._pruneScope('r'); // build 106: session conns survive an ICE retry too
     this._nullSends();
     this._joinAll();
   }
@@ -1029,6 +1054,10 @@ export class LimboNet {
     if (!this.enabled) return;
     this.leave();
     this.roomKey = roomKey;
+    // build 106: joining a Nexus room names the server — make sure the
+    // persistent session is pointed at it, even if the overlay's server
+    // pick raced the boot. Idempotent; realm joins don't touch it.
+    if (isNexusServerKey(roomKey)) this.setSessionServer(roomKey);
     this.joinedAt = Date.now(); // discovery window start (drives the "finding others" UI)
     this.quietFired = false;
     this.lastJoinError = null;
@@ -1060,9 +1089,34 @@ export class LimboNet {
       this.relayLink.subscribe(this._relayRoomTag, this._relayRoomHandler);
       // build 41: keep the server-wide jukebox channel across room hops
       this.setJukeServer(this._jukeServerKey);
+      // build 106: same for the session channel (relay tag only — the
+      // session Trystero rooms were never left, that's the point)
+      this.setSessionServer(this._sessionServerKey);
     }
     this._armQuietTimer();
     this._updatePill();
+  }
+
+  /* The joinRoom config shared by location rooms and session rooms. */
+  _roomConfig(si) {
+    const isNostr = STRATEGIES[si].name === 'nostr';
+    return {
+      appId: APP_ID,
+      rtcConfig: this.rtcConfig,
+      // Pin the 3 reliable nostr relays (verified config key in the
+      // 0.25.4 module source: getRelays uses config.relayConfig.urls).
+      ...(isNostr ? { relayConfig: { urls: NOSTR_RELAYS } } : {}),
+      // Trystero calls this when SDP was exchanged but the peer
+      // connection failed — carries the real reason (ICE/TURN/etc).
+      onJoinError: (details) => this._onJoinError(si, details),
+      // Fires per peer during the WebRTC handshake, BEFORE onPeerJoin
+      // (which only fires after the data channel fully connects). The
+      // core composes this with its internal handshake handler, so
+      // observing here is safe. Lets the HUD tell "discovered but
+      // handshake stalled" apart from "never discovered".
+      onPeerHandshake: (peerId, _send, _receive, isInitiator) =>
+        this._hsTouch(si, peerId, isInitiator),
+    };
   }
 
   /* Join the room on every loaded strategy module and wire all actions.
@@ -1075,44 +1129,27 @@ export class LimboNet {
       const mod = this.mods[si];
       if (!mod) continue;
       const name = STRATEGIES[si].name;
-      const isNostr = name === 'nostr';
       let room;
       try {
-        room = mod.joinRoom(
-          {
-            appId: APP_ID,
-            rtcConfig: this.rtcConfig,
-            // Pin the 3 reliable nostr relays (verified config key in the
-            // 0.25.4 module source: getRelays uses config.relayConfig.urls).
-            ...(isNostr ? { relayConfig: { urls: NOSTR_RELAYS } } : {}),
-            // Trystero calls this when SDP was exchanged but the peer
-            // connection failed — carries the real reason (ICE/TURN/etc).
-            onJoinError: (details) => this._onJoinError(si, details),
-            // Fires per peer during the WebRTC handshake, BEFORE onPeerJoin
-            // (which only fires after the data channel fully connects). The
-            // core composes this with its internal handshake handler, so
-            // observing here is safe. Lets the HUD tell "discovered but
-            // handshake stalled" apart from "never discovered".
-            onPeerHandshake: (peerId, _send, _receive, isInitiator) =>
-              this._hsTouch(si, peerId, isInitiator),
-          },
-          this.roomKey
-        );
+        room = mod.joinRoom(this._roomConfig(si), this.roomKey);
       } catch (e) {
         this._netLog(`joinRoom threw on ${name}: ${(e && e.message) || e}`);
         continue;
       }
       this._netLog(`room joined on ${name} (key=${this.roomKey})`);
       const entry = { si, name, mod, room, selfId: this.selfIds[si], A: {} };
-      this._wireRoom(entry);
+      this._wireRoom(entry, 'r');
       this.rooms.push(entry);
     }
     if (this.rooms.length > 0) {
       for (const n of BROADCAST_ACTIONS)
         // build 41: jukebox actions ride the server channel, not the world room
+        // build 106: wisps ride the persistent session room, not the world room
         this['send' + cap(n)] = JUKE_SERVER_ACTIONS.has(n)
           ? (data) => this._jukeBcast(n, data)
-          : (data) => this._bcast(n, data);
+          : n === 'wisp'
+            ? (data) => this._wispBcast(data)
+            : (data) => this._bcast(n, data);
       for (const n of TARGETED_ACTIONS)
         this['send' + cap(n)] = (data, target) => this._sendTo(n, data, target);
     } else {
@@ -1178,6 +1215,145 @@ export class LimboNet {
     } catch (e) {}
   }
 
+  /* Build 106: point the persistent session at a Nexus server. Mirrors
+     setJukeServer's lifecycle: called on server pick, re-pointed by
+     join() after a room hop (relay tag only — the Trystero session rooms
+     themselves are never torn down by a hop), left only when the server
+     actually changes. Idempotent for the same server. */
+  setSessionServer(serverKey) {
+    this._sessionServerKey = serverKey || null;
+    const key = serverKey ? sessionKeyFor(serverKey) : null;
+    if (key === this._sessionKey) {
+      this._subRelaySession(); // same server — just make sure the relay leg is on
+      return;
+    }
+    // Server changed (or first pick): drop the old session entirely.
+    for (const e of this.sessionRooms) {
+      try {
+        e.room.leave();
+      } catch (err) {
+        /* ignore */
+      }
+    }
+    this.sessionRooms = [];
+    if (this.relayLink && this._relaySessionTag) {
+      try {
+        this.relayLink.unsubscribe(this._relaySessionTag, this._relaySessionHandler);
+      } catch (e) {}
+      this._relaySessionTag = null;
+    }
+    this._pruneScope('s'); // old server's session peers are gone for real
+    this._sessionKey = key;
+    if (!key || !this.enabled) return;
+    for (let si = 0; si < STRATEGIES.length; si++) {
+      const mod = this.mods[si];
+      if (!mod) continue;
+      let room;
+      try {
+        room = mod.joinRoom(this._roomConfig(si), key);
+      } catch (e) {
+        this._netLog(`session joinRoom threw on ${STRATEGIES[si].name}: ${(e && e.message) || e}`);
+        continue;
+      }
+      this._netLog(`session joined on ${STRATEGIES[si].name} (key=${key})`);
+      const entry = { si, name: STRATEGIES[si].name, mod, room, selfId: this.selfIds[si], A: {} };
+      this._wireRoom(entry, 's', ['wisp']);
+      this.sessionRooms.push(entry);
+    }
+    this._subRelaySession();
+    this._updatePill();
+  }
+
+  /* Build 106: subscribe the relay leg of the session channel. Safe to
+     call any time; the RelayLink re-sends REQs for stored tags whenever
+     a socket opens, so subscribing before the transport is ready is
+     fine (same contract the jukebox server tag relies on). */
+  _subRelaySession() {
+    if (!this._sessionKey || !this.relayMode || !this.relayLink) return;
+    try {
+      const tag = this.relayLink.tagFor(this._sessionKey);
+      if (tag && tag !== this._relaySessionTag && tag !== this._relayRoomTag) {
+        if (this._relaySessionTag)
+          this.relayLink.unsubscribe(this._relaySessionTag, this._relaySessionHandler);
+        this.relayLink.subscribe(tag, this._relaySessionHandler);
+        this._relaySessionTag = tag;
+      }
+    } catch (e) {}
+  }
+
+  /* Build 106: incoming session traffic from the relay — wisps only.
+     Same _in() path as a data channel; dedup collapses double delivery. */
+  _onRelaySession(obj) {
+    try {
+      if (!obj || typeof obj !== 'object' || obj.a !== 'wisp') return;
+      const d = obj.d;
+      if (!d || typeof d !== 'object') return;
+      const cid = typeof d.cid === 'string' && d.cid ? d.cid : null;
+      if (!cid || cid === this.clientId) return;
+      if (obj.to && obj.to !== this.clientId) return;
+      let rec = this.peers.get(cid);
+      if (!rec) {
+        rec = { conns: new Map(), relay: true, lastSeen: 0 };
+        this.peers.set(cid, rec);
+      }
+      rec.lastSeen = Date.now();
+      this._in('relay', 'wisp', 'onWispCb', d, cid);
+      this._updatePill();
+    } catch (e) {}
+  }
+
+  /* Build 106: wisps ride the session rooms when we have them (the
+     normal case once a server is picked), else the location rooms —
+     the pre-pick / degraded fallback. The relay leg publishes to the
+     session tag so a portal hop never moves our wisp stream. */
+  _wispBcast(data) {
+    if (!this.enabled) return;
+    let out;
+    try {
+      out = Object.assign({ cid: this.clientId }, data);
+    } catch (e) {
+      out = { cid: this.clientId };
+    }
+    const targets = this.sessionRooms.length ? this.sessionRooms : this.rooms;
+    for (const e of targets) {
+      try {
+        if (e.A.wisp) e.A.wisp.send(out);
+      } catch (err) {
+        /* best effort per room */
+      }
+    }
+    if (this.relayMode) {
+      const tag = this._relaySessionTag || this._relayRoomTag;
+      if (tag) this._relayPublishTo(tag, 'wisp', out, null);
+    }
+  }
+
+  /* Build 106: drop only one scope's connections ('r' room / 's'
+     session) from the peers map. A human whose other scope still has a
+     live connection stays connected — that's the whole point of the
+     session layer. Relay-flagged records are left to the sweeper. */
+  _pruneScope(scope) {
+    for (const [cid, rec] of [...this.peers]) {
+      let dropped = false;
+      for (const [k, c] of [...rec.conns]) {
+        if (c.scope === scope) {
+          rec.conns.delete(k);
+          dropped = true;
+        }
+      }
+      if (dropped && rec.conns.size === 0 && !rec.relay) {
+        this.peers.delete(cid);
+        if (!cid.startsWith('~prov:') && this.onPeerLeaveCb) {
+          try {
+            this.onPeerLeaveCb(cid);
+          } catch (e) {
+            /* game callbacks must never break networking */
+          }
+        }
+      }
+    }
+  }
+
   /* Build 41: incoming jukebox traffic from the server channel. Same _in()
      path as the room handler; only jukebox actions are honored here. */
   _onRelayJukeServer(obj) {
@@ -1203,32 +1379,37 @@ export class LimboNet {
     } catch (e) {}
   }
 
-  _wireRoom(entry) {
+  /* Wire a room's actions + peer events. `scope` tags every connection
+     this room produces ('r' location room / 's' session room, build 106)
+     so a room hop can prune only its own scope. `only` restricts which
+     actions are wired (session rooms carry wisps and nothing else). */
+  _wireRoom(entry, scope = 'r', only = null) {
     const si = entry.si;
     const room = entry.room;
-    for (const name of Object.keys(ACTION_CBS)) {
+    const names = only || Object.keys(ACTION_CBS);
+    for (const name of names) {
       const action = room.makeAction(name);
       entry.A[name] = action;
       const cbProp = ACTION_CBS[name];
       action.onMessage = (d, info) =>
-        this._in(si, name, cbProp, d, info && info.peerId);
+        this._in(si, name, cbProp, d, info && info.peerId, scope);
     }
-    room.onPeerJoin = (id) => this._noteConn(si, id);
-    room.onPeerLeave = (id) => this._dropConn(si, id);
+    room.onPeerJoin = (id) => this._noteConn(si, id, scope, entry);
+    room.onPeerLeave = (id) => this._dropConn(si, id, scope);
   }
 
   /* A data channel connected on strategy si to trystero peerId. We don't
      know the human's cid until their first payload arrives, so park the
      connection under a provisional key; _in() promotes it on first sight. */
-  _noteConn(si, peerId) {
-    const connKey = `${si}:${peerId}`;
+  _noteConn(si, peerId, scope = 'r', entry = null) {
+    const connKey = `${scope}:${si}:${peerId}`;
     const prov = `~prov:${connKey}`;
     let rec = this.peers.get(prov);
     if (!rec) {
       rec = { conns: new Map() };
       this.peers.set(prov, rec);
     }
-    rec.conns.set(connKey, { si, peerId: String(peerId) });
+    rec.conns.set(connKey, { si, peerId: String(peerId), scope, entry });
     // Someone made it — signaling works. Reset the ICE retry ladder.
     this._iceRetryN = 0;
     this._clearIceRetry();
@@ -1236,8 +1417,8 @@ export class LimboNet {
     this._updatePill();
   }
 
-  _dropConn(si, peerId) {
-    const connKey = `${si}:${peerId}`;
+  _dropConn(si, peerId, scope = 'r') {
+    const connKey = `${scope}:${si}:${peerId}`;
     for (const [canon, rec] of this.peers) {
       if (rec.conns.delete(connKey)) {
         if (rec.conns.size === 0) {
@@ -1261,27 +1442,34 @@ export class LimboNet {
 
   /* Promote a provisional connection to its cid on first payload, merging
      with the same human's connection from the other strategy (if any). */
-  _promoteConn(si, peerId, cid) {
-    const connKey = `${si}:${peerId}`;
+  _promoteConn(si, peerId, cid, scope = 'r') {
+    const connKey = `${scope}:${si}:${peerId}`;
     const prov = `~prov:${connKey}`;
-    const c = { si, peerId: String(peerId) };
     let rec = this.peers.get(cid);
     if (!rec) {
       rec = { conns: new Map() };
       this.peers.set(cid, rec);
     }
-    rec.conns.set(connKey, c);
     const old = this.peers.get(prov);
     if (old && old !== rec) {
-      for (const [k, v] of old.conns) if (k !== connKey) rec.conns.set(k, v);
+      // Move the parked conn objects over — they carry their room entry,
+      // which is how _pickConn finds the right room later (build 106).
+      for (const [k, v] of old.conns) rec.conns.set(k, v);
       this.peers.delete(prov);
+    }
+    if (!rec.conns.has(connKey)) {
+      // Payload beat onPeerJoin (rare): synthesize the conn; the entry is
+      // resolved lazily by _pickConn's rooms fallback.
+      rec.conns.set(connKey, { si, peerId: String(peerId), scope, entry: null });
     }
   }
 
   /* Incoming action payload on strategy si. Canonical peer id is the
      sender's cid (injected by _bcast/_sendTo on every payload we emit);
-     the '~prov:' fallback only matters for mixed-version rooms. */
-  _in(si, actionName, cbProp, d, peerId) {
+     the '~prov:' fallback only matters for mixed-version rooms. Relay
+     deliveries (si === 'relay') skip conn promotion — they carry no
+     data-channel connection to promote (build 106). */
+  _in(si, actionName, cbProp, d, peerId, scope = 'r') {
     let cid = null;
     try {
       cid =
@@ -1290,7 +1478,7 @@ export class LimboNet {
           : null;
     } catch (e) {}
     if (!cid) cid = `~prov:${si}:${peerId}`;
-    else this._promoteConn(si, peerId, cid);
+    else if (typeof si === 'number') this._promoteConn(si, peerId, cid, scope);
     // Duplicate-delivery filter: the same logical broadcast arrives once
     // per strategy room; drop the second copy.
     const now = Date.now();
@@ -1354,13 +1542,23 @@ export class LimboNet {
     if (this.relayMode) this._relayPublish(actionName, out, null);
   }
 
-  /* Resolve a canonical cid to one concrete (room, peerId) and send once. */
-  _pickConn(canon) {
+  /* Resolve a canonical cid to one concrete (room, peerId) and send once.
+     Build 106: conns carry their room entry (location or session), so a
+     targeted send reaches the human on whichever room connected first —
+     but only through a room that actually carries the action (session
+     rooms are wisp-only, so file chunks still pick a location conn). */
+  _pickConn(canon, actionName) {
     const rec = this.peers.get(canon);
     if (!rec) return null;
     for (const [, c] of rec.conns) {
+      if (c.entry && (!actionName || c.entry.A[actionName]))
+        return { entry: c.entry, peerId: c.peerId };
+    }
+    // Synthesized conns (payload beat onPeerJoin) carry no entry — fall
+    // back to the location room on that strategy, the pre-106 behavior.
+    for (const [, c] of rec.conns) {
       const entry = this.rooms[c.si];
-      if (entry) return { entry, peerId: c.peerId };
+      if (entry && (!actionName || entry.A[actionName])) return { entry, peerId: c.peerId };
     }
     return null;
   }
@@ -1375,7 +1573,7 @@ export class LimboNet {
       if (actionName === 'jukeFileReq') return this._bcast(actionName, data);
       return;
     }
-    const c = this._pickConn(String(target));
+    const c = this._pickConn(String(target), actionName);
     let out;
     try {
       out = Object.assign({ cid: this.clientId }, data);
@@ -1426,7 +1624,9 @@ export class LimboNet {
       }
     }
     this.rooms = [];
-    this.peers.clear();
+    // build 106: only the room scope dies with the room. Session conns
+    // (and the humans behind them) ride through the hop untouched.
+    this._pruneScope('r');
     this._nullSends();
     // build 37: drop the room's relay subscription (the lobby sub survives hops).
     if (this.relayLink && this._relayRoomTag) {
@@ -1442,6 +1642,14 @@ export class LimboNet {
         this.relayLink.unsubscribe(this._jukeServerTag, this._jukeServerHandler);
       } catch (e) {}
       this._jukeServerTag = null;
+    }
+    // build 106: same contract for the session channel's relay tag —
+    // join() re-points it via setSessionServer right after the hop.
+    if (this.relayLink && this._relaySessionTag) {
+      try {
+        this.relayLink.unsubscribe(this._relaySessionTag, this._relaySessionHandler);
+      } catch (e) {}
+      this._relaySessionTag = null;
     }
     this._updatePill();
   }
@@ -1505,6 +1713,9 @@ export class LimboNet {
   }
 
   joinLobby() {
+    // build 106: if the server was picked before boot finished, the
+    // session join was deferred (enabled=false) — honor it now.
+    if (this._sessionServerKey) this.setSessionServer(this._sessionServerKey);
     if (!this.enabled || this.lobbyRooms.length) return;
     for (let si = 0; si < STRATEGIES.length; si++) {
       const mod = this.mods[si];
@@ -1623,6 +1834,7 @@ export class LimboNet {
     }
     // build 41: the server-wide jukebox channel follows the selected server
     this.setJukeServer(this._jukeServerKey);
+    this._subRelaySession(); // build 106: session wisps get their relay leg
     this.relayLink.subscribe(
       this.relayLink.tagFor(LOBBY_ROOM),
       this._relayLobbyHandler
@@ -1793,6 +2005,9 @@ export class LimboNet {
         c,
       };
       if (fwd && typeof fwd.x === 'number') wisp.f = [r1(fwd.x), r1(fwd.y), r1(fwd.z)];
+      // build 106: stamp my current location — the session channel is
+      // server-wide, so receivers render only drifters in their room.
+      if (this.roomKey) wisp.l = String(this.roomKey).slice(0, 24);
       this.sendWisp(wisp);
     } catch (e) {
       /* ignore */
@@ -1832,7 +2047,7 @@ export class LimboNet {
   getPeerConnections() {
     const out = {};
     try {
-      for (const e of this.rooms) {
+      for (const e of [...this.rooms, ...this.sessionRooms]) {
         let pcs = {};
         try {
           pcs = e.room.getPeers() || {};

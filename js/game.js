@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=105';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=105';
-import { CouchNet } from './couch.js?v=105';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=105';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=105';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=105';
+import { AudioEngine } from './audio.js?v=106';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=106';
+import { CouchNet } from './couch.js?v=106';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=106';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=106';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=106';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -281,6 +281,7 @@ function syncJukeServer() {
   try {
     if (net && net.setJukeServer) net.setJukeServer(nexusServerKey(selectedServer));
   } catch (e) {}
+  syncSessionServer(); // build 106: the player session follows the server too
   if (jukeServerN !== selectedServer) {
     jukeServerN = selectedServer;
     jukeLeaveServer(); // fresh party per server — no stale queue
@@ -288,6 +289,13 @@ function syncJukeServer() {
     jukeRestore(); // build 60: my last line on this server seeds the handoff
     jukeScheduleSync(); // ask the holder for the line; retries while empty
   }
+}
+/* Build 106: the persistent player session follows the same server pick
+   as the jukebox — joined once, survives every portal hop. */
+function syncSessionServer() {
+  try {
+    if (net && net.setSessionServer) net.setSessionServer(nexusServerKey(selectedServer));
+  } catch (e) {}
 }
 
 /* ---------- build 43: server-held queue — holder election ----------
@@ -12319,6 +12327,7 @@ function couchWaitFor(fn, timeoutMs) {
 async function enterCouchMode() {
   if (!couchActive) {
     try { onlineNet.leave(); } catch (e) { /* ignore */ }
+    try { onlineNet.setSessionServer(null); } catch (e) { /* build 106: couch is offline — drop the session too */ }
     try { onlineNet._leaveLobby(); } catch (e) { /* ignore */ }
     couchActive = true;
     setNetPillVisible(false); // the online pill would lie about couch state
@@ -12349,6 +12358,7 @@ async function exitCouchMode() {
       onlineNet.setPresence(myName, active.key);
       onlineNet.joinLobby();
       onlineNet.join(roomKeyFor(active.key));
+      try { onlineNet.setSessionServer(nexusServerKey(selectedServer)); } catch (e) { /* build 106: rejoin the session */ }
     }
   } catch (e) { /* best effort — offline here just means solo */ }
   updatePeerCount();
@@ -12573,6 +12583,7 @@ const BUBBLE_SECS = 4; // floating bubble lifetime above the sender's wisp
 
 const peerPositions = new Map(); // peerId -> THREE.Vector3 (last wisp broadcast)
 const peerHeadings = new Map();  // peerId -> {x,y,z} heading (flock leader votes)
+const peerLocs = new Map();      // build 106: peerId -> room key they're in (the session is server-wide)
 const chatHistory = []; // {name, text, time, sys, self, distant} — this session, capped
 let lastDistantHint = 0;
 
@@ -12870,7 +12881,7 @@ function goTo(key) {
   setTimeout(() => {
     active = worlds[key];
     active.scene.add(wisp, localTrail.group, peerLayer); // re-parents from the previous scene
-    clearPeerVisuals();                       // old room's drifters stay in the old room
+    prunePeersToHere();                       // build 106: session persists — only hide who's not in this room
     net.join(roomKeyFor(active.key));         // hop to this location's P2P room
     net.setPresence(myName, presenceKeyFor(active.key)); // lobby heartbeat: we're elsewhere now
     try { mixerApplyGains(); } catch (e) {} // build 41: re-seat the journey jam duck
@@ -13073,6 +13084,22 @@ function clearPeerVisuals() {
   }
   peerVisuals.clear();
   peerPositions.clear(); peerHeadings.clear(); // new room, new neighborhood
+  peerLocs.clear(); // build 106: full clears only (start / couch switches)
+}
+
+/* Build 106: a portal hop no longer wipes the neighborhood. The session
+   kept everyone connected — just hide whoever isn't in the room I
+   landed in. Drifters who ARE here pop back within a wisp tick (~83ms),
+   no re-discovery, no "finding others" reset. */
+function prunePeersToHere() {
+  const myLoc = active ? roomKeyFor(active.key) : null;
+  for (const id of [...peerVisuals.keys()]) {
+    if (peerLocs.get(id) !== myLoc) removePeerVisual(id, false);
+  }
+  for (const id of [...peerPositions.keys()]) {
+    if (peerLocs.get(id) !== myLoc) { peerPositions.delete(id); peerHeadings.delete(id); }
+  }
+  updatePeerCount();
 }
 
 /* "DRIFTERS HERE" with a discovery state: while we're online, alone, and
@@ -13081,7 +13108,7 @@ function clearPeerVisuals() {
    After the window, settle into a calm "just you in this realm". */
 const DISCOVERY_WINDOW_MS = 45000;
 function updatePeerCount() {
-  const n = net.peerCount() + 1;
+  let n = net.peerCount() + 1;
   let cls = '', suffix = '';
   if (net.couchMode) {
     // Build 34: couch mode has no discovery window — the host's QR is the
@@ -13092,10 +13119,26 @@ function updatePeerCount() {
     } else {
       suffix = ' \u00B7 couch';
     }
-  } else if (net.enabled && net.peerCount() === 0) {
-    const elapsed = Date.now() - (net.joinedAt || Date.now());
-    if (elapsed < DISCOVERY_WINDOW_MS) { cls = 'searching'; suffix = ' \u00B7 finding others'; }
-    else { cls = 'settled'; suffix = ' \u00B7 just you in this realm'; }
+  } else if (net.enabled) {
+    // Build 106: the count is who's IN THIS ROOM with you. The session
+    // keeps everyone on the server connected across hops, so "finding
+    // others" only pulses when the server itself is empty — never just
+    // because you walked through a portal.
+    const myLoc = active ? roomKeyFor(active.key) : null;
+    let here = 0;
+    for (const [, l] of peerLocs) if (l === myLoc) here++;
+    if (here > 0) {
+      n = here + 1;
+    } else if (net.peerCount() === 0) {
+      const elapsed = Date.now() - (net.joinedAt || Date.now());
+      if (elapsed < DISCOVERY_WINDOW_MS) { cls = 'searching'; suffix = ' \u00B7 finding others'; }
+      else { cls = 'settled'; suffix = ' \u00B7 just you in this realm'; }
+      n = 1;
+    } else {
+      // people are on your server — just not in this room
+      cls = 'settled'; suffix = ' \u00B7 just you in this realm';
+      n = 1;
+    }
   }
   peerCountEl.textContent = `DRIFTERS HERE: ${n}${suffix}`;
   peerCountEl.className = cls;
@@ -13104,6 +13147,21 @@ setInterval(updatePeerCount, 1000);
 
 function handleWisp(id, d) {
   if (!d || !Array.isArray(d.p)) return;
+  // Build 106: wisps now arrive server-wide over the persistent session.
+  // Remember where each drifter is; render only the ones in MY room. A
+  // missing `l` (older builds, couch mode) means co-located by
+  // construction — those peers could only reach me from this room.
+  const myLoc = active ? roomKeyFor(active.key) : null;
+  const loc = (typeof d.l === 'string' && d.l) ? d.l : myLoc;
+  peerLocs.set(id, loc);
+  if (loc !== myLoc) {
+    // Somewhere else in the verse — still connected, just not rendered
+    // here (and no "drifted away" — they didn't leave, I can see where
+    // they went and they'll be waiting if I follow).
+    if (peerVisuals.has(id)) removePeerVisual(id, false);
+    else { peerPositions.delete(id); peerHeadings.delete(id); }
+    return;
+  }
   const nm = String(d.n || 'drifter').slice(0, 16) || 'drifter';
   peerPositions.set(id, new THREE.Vector3(d.p[0], d.p[1], d.p[2])); // proximity table
   if (d.f && Array.isArray(d.f) && d.f.length >= 3) peerHeadings.set(id, { x: +d.f[0], y: +d.f[1], z: +d.f[2] }); // flock heading
@@ -13138,17 +13196,19 @@ function handleWisp(id, d) {
   }
 }
 
-function handlePeerLeave(id) {
+/* Remove a drifter's visual + room traces. `announce` distinguishes a
+   real disconnect ("drifted away") from a build-106 location change,
+   where the peer is still connected — just not in this room anymore. */
+function removePeerVisual(id, announce) {
   const pv = peerVisuals.get(id);
   if (pv) {
-    addSystemLine(`${pv.name} drifted away`);
+    if (announce) addSystemLine(`${pv.name} drifted away`);
     peerLayer.remove(pv.group);
     if (pv.trailObj) peerLayer.remove(pv.trailObj.group);
     peerVisuals.delete(id);
   }
   peerPositions.delete(id);
   peerHeadings.delete(id);
-  updatePeerCount();
   // Build 69: the leaver's models leave the room shelf with them.
   try {
     const prefix = String(id) + '::';
@@ -13156,6 +13216,12 @@ function handlePeerLeave(id) {
     for (const k of [...wsPendingModels.keys()]) if (k.startsWith(prefix)) wsPendingModels.delete(k);
   } catch (e) {}
   if (typeof wsShelfRender === 'function') wsShelfRender();
+}
+
+function handlePeerLeave(id) {
+  peerLocs.delete(id); // build 106: they're gone from the server entirely
+  removePeerVisual(id, true);
+  updatePeerCount();
 }
 
 // Wire the net callbacks once; rooms are (re)joined on start + portal hops.
