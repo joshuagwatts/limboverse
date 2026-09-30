@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=104';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=104';
-import { CouchNet } from './couch.js?v=104';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=104';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=104';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=104';
+import { AudioEngine } from './audio.js?v=105';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=105';
+import { CouchNet } from './couch.js?v=105';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=105';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=105';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=105';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -5180,17 +5180,28 @@ function jukeLoadYTApi(cb) {
   juke.ytApiQueue.push(cb);
   if (juke.ytApiLoading) return;
   juke.ytApiLoading = true;
+  // Build 105: same hung-load latch as the SC loader — if the iframe_api
+  // script stalls (no onload via onYouTubeIframeAPIReady, no onerror), the
+  // waiters hung forever and youtube tracks died silent. 12s timeout fails
+  // them and resets so the next track retries.
+  const token = (juke.ytApiToken = (juke.ytApiToken || 0) + 1);
+  const fail = () => {
+    if (juke.ytApiToken !== token) return;
+    juke.ytApiToken++;
+    juke.ytApiLoading = false;
+    const q = juke.ytApiQueue.splice(0); q.forEach((f) => { try { f(false); } catch (e) {} });
+  };
   window.onYouTubeIframeAPIReady = () => {
+    if (juke.ytApiToken !== token) return;
+    juke.ytApiToken++;
     juke.ytApiReady = true; juke.ytApiLoading = false;
     const q = juke.ytApiQueue.splice(0); q.forEach((f) => { try { f(true); } catch (e) {} });
   };
   const s = document.createElement('script');
   s.src = 'https://www.youtube.com/iframe_api';
-  s.onerror = () => {
-    juke.ytApiLoading = false;
-    const q = juke.ytApiQueue.splice(0); q.forEach((f) => { try { f(false); } catch (e) {} });
-  };
+  s.onerror = fail;
   document.head.appendChild(s);
+  setTimeout(() => { if (juke.ytApiLoading && juke.ytApiToken === token) fail(); }, 12000);
 }
 
 function jukeLoadSCApi(cb) {
@@ -5198,18 +5209,30 @@ function jukeLoadSCApi(cb) {
   juke.scApiQueue.push(cb);
   if (juke.scApiLoading) return;
   juke.scApiLoading = true;
+  // Build 105: a hung script load (flaky mobile data, shields stalling the
+  // request) never fires onload/onerror — before this, scApiLoading latched
+  // true for the whole session and every soundcloud track silently hung:
+  // iframe up, widget never bound, no play, no error, no watchdog. Fail the
+  // waiters after 12s and reset so the next track retries clean.
+  const token = (juke.scApiToken = (juke.scApiToken || 0) + 1);
+  const fail = () => {
+    if (juke.scApiToken !== token) return; // a newer load owns the state
+    juke.scApiToken++;
+    juke.scApiLoading = false;
+    const q = juke.scApiQueue.splice(0); q.forEach((f) => { try { f(false); } catch (e) {} });
+  };
   const s = document.createElement('script');
   s.src = 'https://w.soundcloud.com/player/api.js';
   s.onload = () => {
+    if (juke.scApiToken !== token) return;
+    juke.scApiToken++;
     juke.scApiReady = !!(window.SC && window.SC.Widget);
     juke.scApiLoading = false;
     const q = juke.scApiQueue.splice(0); q.forEach((f) => { try { f(juke.scApiReady); } catch (e) {} });
   };
-  s.onerror = () => {
-    juke.scApiLoading = false;
-    const q = juke.scApiQueue.splice(0); q.forEach((f) => { try { f(false); } catch (e) {} });
-  };
+  s.onerror = fail;
   document.head.appendChild(s);
+  setTimeout(() => { if (juke.scApiLoading && juke.scApiToken === token) fail(); }, 12000);
 }
 
 /* ---------- hardened playback (build 25) ----------
@@ -5535,9 +5558,13 @@ function jukePlaySCFresh(d, offset) {
   jukeLoadSCApi((ok) => {
     if (!juke.now || juke.now.id !== d.id) { try { iframe.remove(); } catch (e) {} return; }
     if (!ok) {
-      jukeHint('soundcloud isn\u2019t loading — check your connection');
+      // Build 105: remove the orphan iframe — holders are permanent, so a
+      // leftover widget would sit in the holder forever (and stack up).
+      // Pass the real reason through: jukeOnTrackError would otherwise
+      // overwrite the hint with the misleading "is it public?" default.
+      try { iframe.remove(); } catch (e) {}
       juke.playerErrored = true;
-      jukeOnTrackError();
+      jukeOnTrackError('soundcloud isn\u2019t loading — check your connection');
       return;
     }
     try {
@@ -6123,7 +6150,14 @@ function setJukePanel(open) {
   juke.open = !!open;
   if (jukePanel) jukePanel.style.display = juke.open ? '' : 'none';
   chatFocused = juke.open; // same guard as jam: keys never fly the wisp
-  if (juke.open) renderJuke();
+  if (juke.open) {
+    renderJuke();
+    // Build 105: warm the player APIs while the drifter is browsing the
+    // drawer, so the first queued track doesn't pay the script-load latency
+    // inside the play path (where a slow load reads as a crash).
+    try { jukeLoadSCApi(() => {}); } catch (e) {}
+    try { jukeLoadYTApi(() => {}); } catch (e) {}
+  }
   if (jukeBtn) jukeBtn.blur();
 }
 
