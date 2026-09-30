@@ -1255,6 +1255,20 @@ html, body {
   padding: 10px 16px; min-height: 44px;
   cursor: pointer; touch-action: manipulation;
 }
+/* build 103: wall picker lives on its own row so save/done stay reachable */
+.paint-subhead {
+  flex: 0 0 auto;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.paint-subhead #paint-fresh {
+  background: rgba(255, 122, 217, 0.10);
+  border: 1px solid rgba(255, 122, 217, 0.5); border-radius: 999px;
+  color: #ffc4ec; font-family: inherit; font-size: 11px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 10px 16px; min-height: 44px;
+  cursor: pointer; touch-action: manipulation;
+}
 /* Build 84: wall picker — N/E/S/W tabs */
 #wall-picker { display: flex; gap: 4px; flex-shrink: 0; }
 .wall-pick {
