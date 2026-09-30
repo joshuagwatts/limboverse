@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=103';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=103';
-import { CouchNet } from './couch.js?v=103';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=103';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=103';
-import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=103';
+import { AudioEngine } from './audio.js?v=104';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=104';
+import { CouchNet } from './couch.js?v=104';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=104';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=104';
+import { verseLoad, verseCapture, verseAge, verseSummary, VERSE_INTERVAL_MS } from './verse.js?v=104';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -5476,7 +5476,10 @@ function jukeOnTrackError(msg) {
   if (jukeErrAdvancedFor === juke.now.id) return; // already handling it
   jukeErrAdvancedFor = juke.now.id;
   jukeHint(msg || 'couldn\u2019t load that link — is it public?');
-  if (juke.now.addedBy === myName) {
+  // Build 104: the HOLDER advances on a broken track, not just the adder.
+  // (The old addedBy === myName check stranded everyone else on a dead track
+  // when someone else's link failed to load.)
+  if (jukeIAmHolder) {
     setTimeout(() => {
       if (juke.now && jukeErrAdvancedFor === juke.now.id) jukeAdvance();
     }, 2500);
